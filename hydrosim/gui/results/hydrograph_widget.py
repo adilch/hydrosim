@@ -23,13 +23,13 @@ from matplotlib.backends.backend_qtagg import (
     NavigationToolbar2QT,
 )
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QCheckBox, QColorDialog, QComboBox, QFileDialog, QHBoxLayout,
     QHeaderView, QLabel, QMainWindow, QMessageBox, QPushButton,
     QScrollArea, QSizePolicy, QStackedWidget, QStatusBar,
-    QTabWidget, QTableWidget, QTableWidgetItem,
+    QTabWidget, QTableView,
     QVBoxLayout, QWidget,
 )
 
@@ -384,12 +384,78 @@ class PlotCanvas(QWidget):
     xlim_changed = pyqtSignal(float, float)
 
 
+# ── Virtual table model ───────────────────────────────────────────────────────
+
+class _ResultTableModel(QAbstractTableModel):
+    """
+    Read-only virtual table model backed by numpy arrays.
+    Rows are rendered on-demand — O(1) to load regardless of dataset size.
+    No QTableWidgetItem objects are ever created.
+    """
+
+    _FG = QColor(TEXT_PRIMARY)
+    _ALIGN_RIGHT = int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+    def __init__(
+        self,
+        time_arr: np.ndarray,
+        series:   list[tuple[str, np.ndarray]],  # [(label, array), ...]
+        indices:  np.ndarray,                     # row indices into time_arr
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._time_arr = time_arr
+        self._series   = series    # [(label, data_array), ...]
+        self._indices  = indices   # filtered row indices
+
+    def rowCount(self, parent=QModelIndex()) -> int:
+        return len(self._indices)
+
+    def columnCount(self, parent=QModelIndex()) -> int:
+        return 1 + len(self._series)
+
+    def headerData(self, section: int, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        if orientation == Qt.Orientation.Horizontal:
+            if section == 0:
+                return "Time (days)"
+            if 1 <= section <= len(self._series):
+                return self._series[section - 1][0]
+        elif orientation == Qt.Orientation.Vertical:
+            return str(self._indices[section] + 1)  # 1-based row number
+        return None
+
+    def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        row, col = index.row(), index.column()
+        src_idx  = int(self._indices[row])
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            if col == 0:
+                return f"{self._time_arr[src_idx]:.2f}"
+            arr = self._series[col - 1][1]
+            if src_idx < len(arr):
+                return f"{arr[src_idx]:.4f}"
+            return ""
+
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            if col > 0:
+                return self._ALIGN_RIGHT
+
+        if role == Qt.ItemDataRole.ForegroundRole:
+            return self._FG
+
+        return None
+
+
 # ── DataTableWidget ───────────────────────────────────────────────────────────
 
 class DataTableWidget(QWidget):
     """
-    Full-range data table — shows every completed timestep.
-    Populated once when set_data() is called; no xlim sync needed.
+    Virtual data table — instantaneous regardless of row count.
+    Uses QTableView + QAbstractTableModel so only visible rows are rendered.
     """
 
     def __init__(self, parent=None):
@@ -408,7 +474,7 @@ class DataTableWidget(QWidget):
         )
         hdr_lay = QHBoxLayout(hdr)
         hdr_lay.setContentsMargins(10, 0, 10, 0)
-        title_lbl = QLabel("Data Table — full simulation range")
+        title_lbl = QLabel("Data Table")
         title_lbl.setFont(QFont(FONT_UI, 9))
         title_lbl.setStyleSheet(
             f"color: {TEXT_SECONDARY}; font-weight: 600; background: transparent;"
@@ -423,24 +489,29 @@ class DataTableWidget(QWidget):
         hdr_lay.addWidget(self._row_count_lbl)
         root.addWidget(hdr)
 
-        # Table
-        self._table = QTableWidget()
-        self._table.setAlternatingRowColors(True)
-        self._table.setFont(QFont(FONT_MONO, 9))
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.horizontalHeader().setSectionResizeMode(
+        # QTableView (virtual — no items created upfront)
+        self._view = QTableView()
+        self._view.setAlternatingRowColors(True)
+        self._view.setFont(QFont(FONT_MONO, 9))
+        self._view.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        self._view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        self._view.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self._view.verticalHeader().setDefaultSectionSize(22)
+        self._view.verticalHeader().setVisible(False)
+        self._view.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
         )
-        self._table.setStyleSheet(
-            f"QTableWidget {{ border: none; background: white; color: {TEXT_PRIMARY}; "
+        self._view.horizontalHeader().setStretchLastSection(True)
+        self._view.setStyleSheet(
+            f"QTableView {{ border: none; background: white; color: {TEXT_PRIMARY}; "
             f"alternate-background-color: #F9FAFB; gridline-color: #F0F1F5; }}"
-            f"QTableWidget::item {{ color: {TEXT_PRIMARY}; padding: 2px 6px; }}"
+            f"QTableView::item {{ color: {TEXT_PRIMARY}; padding: 0px 6px; }}"
             f"QHeaderView::section {{ background: #F5F6FA; color: {TEXT_PRIMARY}; "
             f"font-weight: 600; border: none; "
             f"border-bottom: 1px solid {BORDER_SUBTLE}; padding: 4px 8px; }}"
         )
-        root.addWidget(self._table, stretch=1)
+        self._model: _ResultTableModel | None = None
+        root.addWidget(self._view, stretch=1)
 
     def set_data(
         self,
@@ -451,8 +522,8 @@ class DataTableWidget(QWidget):
         x_hi:          float | None = None,
     ) -> None:
         """
-        Populate the table. If x_lo/x_hi are given only rows in that
-        range are shown; otherwise the full simulation range is displayed.
+        Swap in a new virtual model — O(1) regardless of row count.
+        Only the rows visible in the viewport are ever rendered.
         """
         if time_arr is None or results_store is None:
             return
@@ -460,43 +531,30 @@ class DataTableWidget(QWidget):
         n     = results_store.completed_steps
         t_all = time_arr[:n]
 
-        # Apply optional X filter
+        # Build filtered index array
         if x_lo is not None or x_hi is not None:
             lo   = x_lo if x_lo is not None else float(t_all[0])
             hi   = x_hi if x_hi is not None else float(t_all[-1])
-            mask = (t_all >= lo) & (t_all <= hi)
+            indices = np.where((t_all >= lo) & (t_all <= hi))[0]
         else:
-            mask = np.ones(n, dtype=bool)
+            indices = np.arange(n)
 
-        t_vis   = t_all[mask]
-        indices = np.where(mask)[0]
-        n_vis   = len(t_vis)
-        visible = [c for c in configs if c.visible]
-
-        cols = ["Time (days)"] + [c.label for c in visible]
-        self._table.setColumnCount(len(cols))
-        self._table.setHorizontalHeaderLabels(cols)
-        self._table.setRowCount(n_vis)
-
-        fg = QColor(TEXT_PRIMARY)
-        for row, t in enumerate(t_vis):
-            item = QTableWidgetItem(f"{t:.2f}")
-            item.setForeground(fg)
-            self._table.setItem(row, 0, item)
-
-        for ci, cfg in enumerate(visible):
+        # Build series list (only visible series, only completed rows)
+        series: list[tuple[str, np.ndarray]] = []
+        for cfg in configs:
+            if not cfg.visible:
+                continue
             try:
                 arr = results_store.get_series(cfg.element_id, cfg.port_name)
+                series.append((cfg.label, arr))
             except KeyError:
                 continue
-            for row, idx in enumerate(indices):
-                item = QTableWidgetItem(f"{arr[idx]:.4f}")
-                item.setTextAlignment(
-                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-                )
-                item.setForeground(fg)
-                self._table.setItem(row, 1 + ci, item)
 
+        # Swap model — this is the only work done on the main thread
+        self._model = _ResultTableModel(t_all, series, indices)
+        self._view.setModel(self._model)
+
+        n_vis = len(indices)
         if x_lo is not None or x_hi is not None:
             self._row_count_lbl.setText(
                 f"{n_vis} rows  ({x_lo:.1f} – {x_hi:.1f} days)"
