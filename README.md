@@ -4,6 +4,8 @@
 
 Build water balance models visually by dragging and connecting elements on a canvas, run time-stepping simulations, and view interactive hydrograph results.
 
+![HydroSim canvas showing the Hawkesbury Water Balance model](docs/screenshot.png)
+
 > Phase 1 MVP — all 14 acceptance criteria passing, 213 unit tests green.
 
 ---
