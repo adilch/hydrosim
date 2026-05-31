@@ -1,27 +1,41 @@
 """
-HydrographWindow — floating result viewer.
+Results Dashboard — GoldSim-style result viewer using Matplotlib.
 
-Opens when the user double-clicks a TimeHistoryResult element after simulation.
-Non-modal: multiple windows can be open simultaneously.
-Uses PyQtGraph for interactive display; Matplotlib for PNG export.
+Architecture:
+  ResultsDashboard   QMainWindow — single window, always-on-top of canvas
+    QTabWidget       one tab per TimeHistoryResult element
+      ResultTab      series manager (left) | chart + table (right)
+        SeriesManagerPanel   checkbox / axis / colour per series
+        PlotCanvas           Matplotlib FigureCanvas + MATLAB-style toolbar
+        DataTableWidget      scrollable table, rows = visible time range (Option A)
 """
 from __future__ import annotations
 
-from pathlib import Path
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pyqtgraph as pg
-from PyQt6.QtCore import QPoint, QPointF, Qt
-from PyQt6.QtGui import QColor, QFont, QMouseEvent
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import (
+    FigureCanvasQTAgg,
+    NavigationToolbar2QT,
+)
+
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QCheckBox, QColorDialog, QComboBox, QFileDialog, QHBoxLayout,
+    QHeaderView, QLabel, QMainWindow, QMessageBox, QPushButton,
+    QScrollArea, QSizePolicy, QSplitter, QStatusBar,
+    QTabWidget, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 from hydrosim.gui.styles.theme import (
-    BORDER_SUBTLE, CAT_RESULT, FONT_MONO, FONT_UI,
-    PANEL_BG, SEL_BLUE, TEXT_PRIMARY, TEXT_SECONDARY,
+    BORDER_SUBTLE, FONT_MONO, FONT_UI,
+    PANEL_BG, TEXT_PRIMARY, TEXT_SECONDARY,
 )
 
 if TYPE_CHECKING:
@@ -29,219 +43,476 @@ if TYPE_CHECKING:
     from hydrosim.model.elements.timehistory import TimeHistoryResult
     from hydrosim.model.graph import ModelGraph
 
-# Colour palette for series lines (up to 8)
-_LINE_COLOURS = [
-    "#2E86C1",  # Ocean Blue
-    "#E8633A",  # Coral Orange
-    "#4CAF82",  # Leaf Green
-    "#7B68C8",  # Slate Purple
-    "#E8A020",  # Amber
-    "#00897B",  # Teal
-    "#E53935",  # Red
-    "#795548",  # Brown
+# ── Matplotlib global style (MATLAB-like) ─────────────────────────────────────
+
+mpl.rcParams.update({
+    "axes.facecolor":      "white",
+    "figure.facecolor":    "white",
+    "axes.edgecolor":      "#AAAAAA",
+    "axes.labelcolor":     "#1A1A2E",
+    "axes.labelsize":      10,
+    "axes.labelweight":    "bold",
+    "axes.titlesize":      11,
+    "axes.titleweight":    "bold",
+    "axes.grid":           True,
+    "grid.color":          "#EEEEEE",
+    "grid.linewidth":      0.8,
+    "xtick.color":         "#1A1A2E",
+    "ytick.color":         "#1A1A2E",
+    "xtick.labelsize":     9,
+    "ytick.labelsize":     9,
+    "lines.linewidth":     1.5,
+    "lines.antialiased":   True,
+    "font.family":         "sans-serif",
+    "font.size":           10,
+    "legend.fontsize":     9,
+    "legend.framealpha":   0.85,
+    "legend.edgecolor":    "#DDDDDD",
+    "savefig.dpi":         150,
+    "savefig.bbox":        "tight",
+})
+
+# Auto-assigned line colours
+_COLOURS = [
+    "#2E86C1", "#E8633A", "#4CAF82", "#7B68C8",
+    "#E8A020", "#00897B", "#E53935", "#795548",
 ]
 
 
-# ── Title bar (draggable) ─────────────────────────────────────────────────────
+# ── SeriesConfig ──────────────────────────────────────────────────────────────
 
-class _TitleBar(QWidget):
-    """Draggable title bar for the floating result window."""
+@dataclass
+class SeriesConfig:
+    """
+    Configuration for one plotted series.
+    unc_low / unc_high are None in Phase 1; Phase 2 Monte Carlo sets them
+    to arrays for the uncertainty band (fill_between).
+    """
+    element_id: str
+    port_name:  str
+    label:      str            # "ElementName.port_name"
+    axis:       str = "left"   # "left" | "right"
+    colour:     str = ""       # hex, auto-assigned when empty
+    visible:    bool = True
 
-    def __init__(self, title: str, parent: "HydrographWindow"):
+    # Phase 2 ensemble support — leave None in Phase 1
+    unc_low:  np.ndarray | None = None
+    unc_high: np.ndarray | None = None
+
+
+# ── SeriesRow ─────────────────────────────────────────────────────────────────
+
+class _SeriesRow(QWidget):
+    """One row in the series manager: [✓] label  [Left▼]  [■ colour]"""
+
+    changed = pyqtSignal()
+
+    def __init__(self, config: SeriesConfig, parent=None):
         super().__init__(parent)
-        self._win      = parent
-        self._dragging = False
-        self._drag_pos = QPoint()
+        self.config = config
 
-        self.setFixedHeight(40)
-        self.setStyleSheet(
-            f"background: {PANEL_BG}; border-bottom: 1px solid #EEF0F4;"
-        )
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(14, 0, 10, 0)
-        lay.setSpacing(10)
+        lay.setContentsMargins(6, 3, 6, 3)
+        lay.setSpacing(6)
 
-        # Orange dot indicator (result element colour)
-        dot = QLabel("●")
-        dot.setFont(QFont(FONT_UI, 9))
-        dot.setStyleSheet(f"color: {CAT_RESULT}; background: transparent;")
-        lay.addWidget(dot)
+        # Visibility checkbox
+        self._cb = QCheckBox()
+        self._cb.setChecked(config.visible)
+        self._cb.setFixedWidth(18)
+        self._cb.toggled.connect(self._on_toggle)
+        lay.addWidget(self._cb)
 
-        # Title
-        self._title_lbl = QLabel(title)
-        self._title_lbl.setFont(QFont(FONT_UI, 13))
-        self._title_lbl.setStyleSheet(f"font-weight: 700; color: {TEXT_PRIMARY}; background: transparent;")
-        lay.addWidget(self._title_lbl, stretch=1)
+        # Series label (truncated)
+        lbl = QLabel(config.label)
+        lbl.setFont(QFont(FONT_MONO, 9))
+        lbl.setStyleSheet(f"color: {TEXT_PRIMARY};")
+        lbl.setToolTip(config.label)
+        lay.addWidget(lbl, stretch=1)
 
-        # Export CSV
-        self._export_btn = QPushButton("Export CSV")
-        self._export_btn.setFixedHeight(26)
-        self._export_btn.setFont(QFont(FONT_UI, 11))
-        self._export_btn.setStyleSheet(
-            f"QPushButton {{ border: 1px solid {BORDER_SUBTLE}; border-radius: 5px; "
-            f"background: {PANEL_BG}; color: {TEXT_PRIMARY}; padding: 0 10px; }}"
-            f"QPushButton:hover {{ background: #EEF0F4; }}"
+        # Axis assignment dropdown
+        self._axis_combo = QComboBox()
+        self._axis_combo.addItems(["Left", "Right"])
+        self._axis_combo.setCurrentText("Left" if config.axis == "left" else "Right")
+        self._axis_combo.setFixedWidth(60)
+        self._axis_combo.setFont(QFont(FONT_UI, 9))
+        self._axis_combo.currentTextChanged.connect(self._on_axis_change)
+        lay.addWidget(self._axis_combo)
+
+        # Colour swatch button
+        self._colour_btn = QPushButton()
+        self._colour_btn.setFixedSize(20, 20)
+        self._colour_btn.setStyleSheet(
+            f"background: {config.colour}; border: 1px solid #CCCCCC; border-radius: 3px;"
         )
-        lay.addWidget(self._export_btn)
+        self._colour_btn.setToolTip("Change colour")
+        self._colour_btn.clicked.connect(self._pick_colour)
+        lay.addWidget(self._colour_btn)
 
-        # Close
-        close_btn = QPushButton("×")
-        close_btn.setFixedSize(26, 26)
-        close_btn.setFont(QFont(FONT_UI, 14))
-        close_btn.setStyleSheet(
-            f"QPushButton {{ border: none; background: transparent; color: {TEXT_SECONDARY}; "
-            f"border-radius: 6px; }}"
-            f"QPushButton:hover {{ background: #EEF0F4; color: {TEXT_PRIMARY}; }}"
+    def _on_toggle(self, checked: bool) -> None:
+        self.config.visible = checked
+        self.changed.emit()
+
+    def _on_axis_change(self, text: str) -> None:
+        self.config.axis = "left" if text == "Left" else "right"
+        self.changed.emit()
+
+    def _pick_colour(self) -> None:
+        col = QColorDialog.getColor(QColor(self.config.colour), self)
+        if col.isValid():
+            self.config.colour = col.name()
+            self._colour_btn.setStyleSheet(
+                f"background: {self.config.colour}; "
+                f"border: 1px solid #CCCCCC; border-radius: 3px;"
+            )
+            self.changed.emit()
+
+
+# ── SeriesManagerPanel ────────────────────────────────────────────────────────
+
+class SeriesManagerPanel(QWidget):
+    """Left sidebar: one _SeriesRow per connected series."""
+
+    series_changed = pyqtSignal()
+
+    def __init__(self, configs: list[SeriesConfig], parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(250)
+        self.setStyleSheet(
+            f"background: {PANEL_BG}; border-right: 1px solid {BORDER_SUBTLE};"
         )
-        close_btn.clicked.connect(parent.hide)
-        lay.addWidget(close_btn)
 
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-    def set_title(self, title: str) -> None:
-        self._title_lbl.setText(title)
+        # Header
+        hdr = QLabel("  Series")
+        hdr.setFixedHeight(28)
+        hdr.setFont(QFont(FONT_UI, 10))
+        hdr.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-weight: 600; "
+            f"background: #F5F6FA; border-bottom: 1px solid {BORDER_SUBTLE};"
+        )
+        root.addWidget(hdr)
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._dragging = True
-            self._drag_pos = event.globalPosition().toPoint() - self._win.frameGeometry().topLeft()
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        # Sub-header
+        sub = QWidget()
+        sub_lay = QHBoxLayout(sub)
+        sub_lay.setContentsMargins(6, 2, 6, 2)
+        sub_lay.setSpacing(0)
+        for text, width in [("", 24), ("Name", 0), ("Axis", 60), ("", 26)]:
+            l = QLabel(text)
+            l.setFont(QFont(FONT_UI, 8))
+            l.setStyleSheet(f"color: {TEXT_SECONDARY};")
+            if width:
+                l.setFixedWidth(width)
+            else:
+                l.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            sub_lay.addWidget(l)
+        sub.setStyleSheet(f"background: #F9FAFB; border-bottom: 1px solid {BORDER_SUBTLE};")
+        root.addWidget(sub)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if self._dragging:
-            new_pos = event.globalPosition().toPoint() - self._drag_pos
-            # Clamp to screen
-            new_pos.setX(max(0, new_pos.x()))
-            new_pos.setY(max(0, new_pos.y()))
-            self._win.move(new_pos)
+        # Rows
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        content.setStyleSheet(f"background: {PANEL_BG};")
+        self._rows_layout = QVBoxLayout(content)
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.setSpacing(0)
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        self._dragging = False
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        for cfg in configs:
+            row = _SeriesRow(cfg)
+            row.changed.connect(self.series_changed)
+            self._rows_layout.addWidget(row)
+
+        self._rows_layout.addStretch()
+        scroll.setWidget(content)
+        root.addWidget(scroll, stretch=1)
 
 
-# ── Legend row ────────────────────────────────────────────────────────────────
+# ── PlotCanvas ────────────────────────────────────────────────────────────────
 
-class _LegendWidget(QWidget):
-    """Horizontal row of colour swatches + series names."""
+class PlotCanvas(QWidget):
+    """
+    Matplotlib FigureCanvas + MATLAB-style NavigationToolbar2QT.
+    Supports dual Y-axis (left + right).
+    Emits xlim_changed when the user pans/zooms.
+    """
+
+    xlim_changed = pyqtSignal(float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(14, 4, 14, 2)
-        self._layout.setSpacing(16)
-        self._layout.addStretch()
-        self.setFixedHeight(26)
+        self.setStyleSheet("background: white;")
 
-    def clear(self) -> None:
-        while self._layout.count() > 1:
-            item = self._layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self.fig = Figure(facecolor="white")
+        self.fig.subplots_adjust(left=0.09, right=0.91, top=0.93, bottom=0.10)
 
-    def add_series(self, label: str, colour: str) -> None:
-        row = QWidget()
-        rlay = QHBoxLayout(row)
-        rlay.setContentsMargins(0, 0, 0, 0)
-        rlay.setSpacing(5)
+        self.ax1 = self.fig.add_subplot(111)   # left Y-axis
+        self.ax2 = self.ax1.twinx()            # right Y-axis
+        self.ax2.set_visible(False)
 
-        swatch = QLabel("━━")
-        swatch.setFont(QFont(FONT_UI, 11))
-        swatch.setStyleSheet(f"color: {colour};")
-        rlay.addWidget(swatch)
-
-        name = QLabel(label)
-        name.setFont(QFont(FONT_MONO, 11))
-        name.setStyleSheet(f"color: {TEXT_PRIMARY};")
-        rlay.addWidget(name)
-
-        # Insert before the stretch
-        self._layout.insertWidget(self._layout.count() - 1, row)
-
-
-# ── Chart toolbar ─────────────────────────────────────────────────────────────
-
-class _ChartToolbar(QWidget):
-    """Bottom toolbar: zoom/pan/home/save PNG + meta text."""
-
-    def __init__(self, plot_widget: pg.PlotWidget, parent=None):
-        super().__init__(parent)
-        self._plot = plot_widget
-        self.setFixedHeight(38)
-        self.setStyleSheet(
-            "background: #FBFBFD; border-top: 1px solid #EEF0F4;"
-            " QLabel { background: transparent; color: #1A1A2E; }"
+        self.canvas  = FigureCanvasQTAgg(self.fig)
+        self.canvas.setStyleSheet("background: white;")
+        self.toolbar = NavigationToolbar2QT(self.canvas, self)
+        self.toolbar.setStyleSheet(
+            f"background: #F5F6FA; border-bottom: 1px solid {BORDER_SUBTLE};"
         )
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(14, 0, 14, 0)
-        lay.setSpacing(4)
 
-        for label, tooltip, slot in [
-            ("Reset",   "Reset view",   self._reset_view),
-            ("Zoom +",  "Zoom in",      self._zoom_in),
-            ("Zoom -",  "Zoom out",     self._zoom_out),
-            ("PNG",     "Save as PNG",  self._save_png),
-        ]:
-            btn = self._tbtn(label, tooltip, slot)
-            lay.addWidget(btn)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self.toolbar)
+        lay.addWidget(self.canvas, stretch=1)
 
-        lay.addWidget(self._separator())
+        # Notify data table when view changes
+        self.ax1.callbacks.connect("xlim_changed", self._emit_xlim)
 
-        self._meta_lbl = QLabel()
-        self._meta_lbl.setFont(QFont(FONT_MONO, 11))
-        self._meta_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
-        lay.addWidget(self._meta_lbl)
-        lay.addStretch()
+    def _emit_xlim(self, ax) -> None:
+        lo, hi = ax.get_xlim()
+        self.xlim_changed.emit(lo, hi)
 
-    def _tbtn(self, label: str, tip: str, slot) -> QPushButton:
-        btn = QPushButton(label)
-        btn.setFixedSize(58, 26)
-        btn.setFont(QFont(FONT_UI, 11))
-        btn.setToolTip(tip)
-        btn.setStyleSheet(
-            f"QPushButton {{ border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; "
-            f"background: {PANEL_BG}; color: {TEXT_PRIMARY}; }}"
-            f"QPushButton:hover {{ background: #EEF0F4; color: {TEXT_PRIMARY}; }}"
-        )
-        btn.clicked.connect(slot)
-        return btn
+    def redraw(
+        self,
+        time_arr:      np.ndarray,
+        configs:       list[SeriesConfig],
+        results_store: "ResultsStore",
+        result_element: "TimeHistoryResult",
+    ) -> None:
+        """Clear and redraw all visible series."""
+        self.ax1.cla()
+        self.ax2.cla()
+        self.ax2.set_visible(False)
 
-    def _separator(self) -> QWidget:
-        d = QWidget(); d.setFixedSize(1, 18)
-        d.setStyleSheet("background: #E3E6EC;")
-        return d
+        has_right = any(c.axis == "right" and c.visible for c in configs)
+        if has_right:
+            self.ax2.set_visible(True)
 
-    def set_meta(self, n_steps: int, dt: float) -> None:
-        self._meta_lbl.setText(f"{n_steps} steps · Δt = {dt} day")
+        lines_for_legend = []
 
-    def _reset_view(self) -> None:
-        self._plot.getViewBox().autoRange()
+        for cfg in configs:
+            if not cfg.visible:
+                continue
+            try:
+                arr = results_store.get_series(cfg.element_id, cfg.port_name)
+            except KeyError:
+                continue
 
-    def _zoom_in(self) -> None:
-        self._plot.getViewBox().scaleBy((0.7, 0.7))
+            n   = results_store.completed_steps
+            t   = time_arr[:n]
+            y   = arr[:n]
+            ax  = self.ax1 if cfg.axis == "left" else self.ax2
+            col = cfg.colour or _COLOURS[0]
 
-    def _zoom_out(self) -> None:
-        self._plot.getViewBox().scaleBy((1.4, 1.4))
+            ln, = ax.plot(t, y, color=col, linewidth=1.5,
+                          label=cfg.label, zorder=3)
+            lines_for_legend.append(ln)
 
-    def _save_png(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Chart as PNG", "hydrograph.png", "PNG (*.png)"
-        )
-        if path:
-            exporter = pg.exporters.ImageExporter(self._plot.plotItem)
-            exporter.parameters()["width"] = 1200
-            exporter.export(path)
+            # Phase 2: uncertainty band
+            if cfg.unc_low is not None and cfg.unc_high is not None:
+                ax.fill_between(
+                    t, cfg.unc_low[:n], cfg.unc_high[:n],
+                    alpha=0.18, color=col, zorder=2,
+                )
+
+        # Axis labels
+        y_label = result_element.y_axis_label or ""
+        y_units = result_element.y_axis_units or ""
+        if y_units and y_units != "-":
+            y_label = f"{y_label} ({y_units})" if y_label else y_units
+        self.ax1.set_ylabel(y_label or "Value")
+        self.ax1.set_xlabel("Time (days)")
+
+        if has_right:
+            self.ax2.set_ylabel("Secondary axis")
+
+        # Title
+        title = result_element.title or result_element.name
+        self.ax1.set_title(title)
+
+        # Manual Y-range
+        if result_element.y_min is not None:
+            self.ax1.set_ylim(bottom=result_element.y_min)
+        if result_element.y_max is not None:
+            self.ax1.set_ylim(top=result_element.y_max)
+
+        # Legend — combine both axes
+        if lines_for_legend:
+            self.ax1.legend(
+                handles=lines_for_legend,
+                loc="best",
+                framealpha=0.85,
+                edgecolor="#DDDDDD",
+            )
+
+        # Grid on primary axis only
+        self.ax1.grid(True, which="major", color="#EEEEEE", linewidth=0.8, zorder=0)
+        self.ax1.set_axisbelow(True)
+
+        # Spine styling
+        for spine in self.ax1.spines.values():
+            spine.set_color("#AAAAAA")
+        if has_right:
+            for spine in self.ax2.spines.values():
+                spine.set_color("#AAAAAA")
+
+        self.canvas.draw_idle()
+
+    def get_xlim(self) -> tuple[float, float]:
+        return self.ax1.get_xlim()
 
 
-# ── HydrographWindow ──────────────────────────────────────────────────────────
+# ── DataTableWidget ───────────────────────────────────────────────────────────
 
-class HydrographWindow(QWidget):
+class DataTableWidget(QWidget):
     """
-    Floating non-modal window displaying time series from a TimeHistoryResult.
+    Shows the data for the currently-visible X range (Option A).
+    Updated whenever the chart is panned or zoomed.
+    Debounced to 250 ms so rapid drags don't cause lag.
+    """
 
-    Usage:
-        win = HydrographWindow(result_element, results_store, graph)
-        win.show()
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"background: {PANEL_BG};")
+
+        self._time_arr:      np.ndarray | None = None
+        self._configs:       list[SeriesConfig] = []
+        self._results_store: "ResultsStore | None" = None
+        self._has_dates:     bool = False
+        self._start_date     = None
+
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(250)
+        self._debounce.timeout.connect(self._refresh_table)
+        self._pending_xlim: tuple[float, float] | None = None
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Header bar
+        hdr = QWidget()
+        hdr.setFixedHeight(28)
+        hdr.setStyleSheet(
+            f"background: #F5F6FA; border-top: 1px solid {BORDER_SUBTLE}; "
+            f"border-bottom: 1px solid {BORDER_SUBTLE};"
+        )
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(8, 0, 8, 0)
+        title = QLabel("Data Table  (visible range)")
+        title.setFont(QFont(FONT_UI, 9))
+        title.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 600; background: transparent;")
+        hdr_lay.addWidget(title)
+        hdr_lay.addStretch()
+        self._row_count_lbl = QLabel()
+        self._row_count_lbl.setFont(QFont(FONT_MONO, 9))
+        self._row_count_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
+        hdr_lay.addWidget(self._row_count_lbl)
+        root.addWidget(hdr)
+
+        # Table
+        self._table = QTableWidget()
+        self._table.setAlternatingRowColors(True)
+        self._table.setFont(QFont(FONT_MONO, 9))
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.setStyleSheet(
+            f"QTableWidget {{ border: none; background: white; "
+            f"alternate-background-color: #F9FAFB; gridline-color: #F0F1F5; }}"
+            f"QHeaderView::section {{ background: #F5F6FA; color: {TEXT_PRIMARY}; "
+            f"font-weight: 600; border: none; border-bottom: 1px solid {BORDER_SUBTLE}; "
+            f"padding: 4px 6px; }}"
+        )
+        root.addWidget(self._table, stretch=1)
+
+    def set_data(
+        self,
+        time_arr:      np.ndarray,
+        configs:       list[SeriesConfig],
+        results_store: "ResultsStore",
+        has_dates:     bool = False,
+        start_date     = None,
+    ) -> None:
+        self._time_arr      = time_arr
+        self._configs       = configs
+        self._results_store = results_store
+        self._has_dates     = has_dates
+        self._start_date    = start_date
+        self._refresh_table()
+
+    def on_xlim_changed(self, lo: float, hi: float) -> None:
+        """Called when chart view changes — debounced."""
+        self._pending_xlim = (lo, hi)
+        self._debounce.start()
+
+    def _refresh_table(self) -> None:
+        if self._time_arr is None or self._results_store is None:
+            return
+
+        lo, hi = self._pending_xlim or (self._time_arr[0], self._time_arr[-1])
+        mask = (self._time_arr >= lo) & (self._time_arr <= hi)
+        t_vis = self._time_arr[mask]
+        n_vis = len(t_vis)
+
+        # Build visible series configs
+        visible = [c for c in self._configs if c.visible]
+
+        # Set columns
+        cols = ["Time (days)"]
+        if self._has_dates:
+            cols.insert(0, "Date")
+        cols += [c.label for c in visible]
+
+        self._table.setColumnCount(len(cols))
+        self._table.setHorizontalHeaderLabels(cols)
+        self._table.setRowCount(n_vis)
+
+        # Dates
+        dates = []
+        if self._has_dates and self._start_date is not None:
+            import pandas as pd
+            dates = pd.date_range(
+                start=self._start_date, periods=len(self._time_arr), freq="D"
+            )[mask].strftime("%Y-%m-%d").tolist()
+
+        col_offset = 0
+        if self._has_dates:
+            for row, d in enumerate(dates):
+                self._table.setItem(row, 0, QTableWidgetItem(d))
+            col_offset = 1
+
+        # Time column
+        for row, t in enumerate(t_vis):
+            self._table.setItem(row, col_offset, QTableWidgetItem(f"{t:.2f}"))
+
+        # Series columns
+        for ci, cfg in enumerate(visible):
+            try:
+                arr = self._results_store.get_series(cfg.element_id, cfg.port_name)
+            except KeyError:
+                continue
+            n_completed = self._results_store.completed_steps
+            full_t      = self._time_arr
+            vis_indices = np.where(mask)[0]
+            for row, idx in enumerate(vis_indices):
+                if idx < n_completed:
+                    val = arr[idx]
+                    item = QTableWidgetItem(f"{val:.4f}")
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self._table.setItem(row, col_offset + 1 + ci, item)
+
+        self._row_count_lbl.setText(f"{n_vis} rows")
+
+
+# ── ResultTab ─────────────────────────────────────────────────────────────────
+
+class ResultTab(QWidget):
+    """
+    One tab's content: SeriesManagerPanel | PlotCanvas / DataTableWidget.
     """
 
     def __init__(
@@ -249,220 +520,262 @@ class HydrographWindow(QWidget):
         result_element: "TimeHistoryResult",
         results_store:  "ResultsStore",
         graph:          "ModelGraph",
-        parent:         QWidget | None = None,
+        parent=None,
     ):
-        super().__init__(parent, Qt.WindowType.Window)
+        super().__init__(parent)
         self._result_element = result_element
         self._results_store  = results_store
         self._graph          = graph
+        self._configs:       list[SeriesConfig] = []
 
-        self.setWindowTitle(result_element.title or result_element.name)
-        self.resize(800, 500)
-        self.setMinimumSize(500, 350)
-        # Explicit white background — without this Qt.WindowType.Window defaults to black
-        self.setStyleSheet("HydrographWindow { background: #FFFFFF; } QWidget { background: #FFFFFF; }")
-        self.setAutoFillBackground(True)
+        self._build_configs()
 
-        self._build_ui()
-        self._populate()
-
-    # ── Build UI ──────────────────────────────────────────────────────────────
-
-    def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
+        # ── Layout ────────────────────────────────────────────────────────
+        root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Title bar
-        title = self._result_element.title or self._result_element.name
-        self._titlebar = _TitleBar(title, self)
-        self._titlebar._export_btn.clicked.connect(self._export_csv)
-        root.addWidget(self._titlebar)
+        # Left: series manager
+        self._series_panel = SeriesManagerPanel(self._configs)
+        self._series_panel.series_changed.connect(self._on_series_changed)
+        root.addWidget(self._series_panel)
 
-        # Legend
-        self._legend = _LegendWidget()
-        self._legend.setStyleSheet("background: #FFFFFF;")
-        root.addWidget(self._legend)
-
-        # PyQtGraph plot
-        pg.setConfigOption("background", "w")
-        pg.setConfigOption("foreground", TEXT_PRIMARY)
-
-        self._plot = pg.PlotWidget()
-        self._plot.setBackground("#FFFFFF")
-        self._plot.showGrid(x=True, y=True, alpha=0.25)
-        self._plot.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        # Right: plot + table in a vertical splitter
+        right_split = QSplitter(Qt.Orientation.Vertical)
+        right_split.setHandleWidth(4)
+        right_split.setStyleSheet(
+            "QSplitter::handle { background: #E7E9EE; }"
         )
-        self._plot.setLabel(
-            "left",
-            self._result_element.y_axis_label or "Value",
-            units=self._result_element.y_axis_units or "-",
-            color=TEXT_PRIMARY,
-        )
-        self._plot.setLabel("bottom", "Time", units="days", color=TEXT_PRIMARY)
 
-        # Style axes — use TEXT_PRIMARY for readable tick labels
-        for axis_name in ("left", "bottom"):
-            ax = self._plot.getAxis(axis_name)
-            ax.setTextPen(QColor(TEXT_PRIMARY))      # dark, readable tick numbers
-            ax.setPen(QColor("#AAAAAA"))              # visible axis line
-            ax.setTickFont(QFont(FONT_MONO, 10))     # slightly larger ticks
+        self._plot    = PlotCanvas()
+        self._table   = DataTableWidget()
+        right_split.addWidget(self._plot)
+        right_split.addWidget(self._table)
+        right_split.setSizes([340, 160])   # chart gets more space by default
 
-        # Manual Y range if specified
-        if self._result_element.y_min is not None and self._result_element.y_max is not None:
-            self._plot.setYRange(self._result_element.y_min, self._result_element.y_max)
+        root.addWidget(right_split, stretch=1)
 
-        # Crosshair cursor
-        self._vline = pg.InfiniteLine(angle=90, movable=False,
-                                      pen=pg.mkPen(color="#AAAAAA", width=1, style=Qt.PenStyle.DashLine))
-        self._hline = pg.InfiniteLine(angle=0,  movable=False,
-                                      pen=pg.mkPen(color="#AAAAAA", width=1, style=Qt.PenStyle.DashLine))
-        self._plot.addItem(self._vline, ignoreBounds=True)
-        self._plot.addItem(self._hline, ignoreBounds=True)
-        self._coord_label = pg.TextItem(anchor=(0, 1), color=TEXT_PRIMARY)
-        self._plot.addItem(self._coord_label)
-        self._plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        # Wire xlim → table
+        self._plot.xlim_changed.connect(self._table.on_xlim_changed)
 
-        root.addWidget(self._plot, stretch=1)
+        # Initial draw
+        self._draw()
 
-        # Chart toolbar
-        self._toolbar = _ChartToolbar(self._plot)
-        root.addWidget(self._toolbar)
-
-    # ── Data population ───────────────────────────────────────────────────────
-
-    def _populate(self) -> None:
-        """Draw all series connected to this TimeHistoryResult."""
-        self._plot.clear()
-        self._plot.addItem(self._vline, ignoreBounds=True)
-        self._plot.addItem(self._hline, ignoreBounds=True)
-        self._plot.addItem(self._coord_label)
-        self._legend.clear()
-
-        connections = self._graph.get_connections_to(self._result_element.id)
-        time_arr = self._results_store.get_completed_timesteps()
-        n_steps  = len(time_arr)
-
-        self._series_data: list[tuple[str, str, np.ndarray]] = []
-
-        for i, conn in enumerate(connections):
+    def _build_configs(self) -> None:
+        """Create a SeriesConfig for each connection feeding this result element."""
+        conns = self._graph.get_connections_to(self._result_element.id)
+        for i, conn in enumerate(conns):
             try:
-                src_elem = self._graph.get_element(conn.from_element_id)
-                arr      = self._results_store.get_series(
-                    conn.from_element_id, conn.from_port_name
-                )
+                src = self._graph.get_element(conn.from_element_id)
             except KeyError:
                 continue
-
-            label  = f"{src_elem.name}.{conn.from_port_name}"
-            colour = _LINE_COLOURS[i % len(_LINE_COLOURS)]
-
-            # Area fill (18% opacity)
-            fill_col = QColor(colour)
-            fill_col.setAlphaF(0.18)
-
-            curve = self._plot.plot(
-                x=time_arr,
-                y=arr[:n_steps],
-                pen=pg.mkPen(color=colour, width=1.8),
-                fillLevel=0,
-                brush=pg.mkBrush(fill_col),
-                name=label,
+            label = f"{src.name}.{conn.from_port_name}"
+            cfg = SeriesConfig(
+                element_id=conn.from_element_id,
+                port_name=conn.from_port_name,
+                label=label,
+                colour=_COLOURS[i % len(_COLOURS)],
             )
+            self._configs.append(cfg)
 
-            self._series_data.append((label, colour, arr[:n_steps]))
-            self._legend.add_series(label, colour)
+    def _draw(self) -> None:
+        time_arr = self._results_store.get_completed_timesteps()
+        self._plot.redraw(time_arr, self._configs, self._results_store,
+                          self._result_element)
 
-        dt = float(self._results_store.timesteps[1] - self._results_store.timesteps[0]) \
-            if len(self._results_store.timesteps) > 1 else 1.0
-        self._toolbar.set_meta(n_steps, dt)
+        has_dates  = self._results_store.timesteps is not None
+        start_date = None
+        # Check if settings had a calendar start date (stored in metadata)
+        self._table.set_data(time_arr, self._configs, self._results_store)
+        # Sync table to current view
+        lo, hi = self._plot.get_xlim()
+        self._table.on_xlim_changed(lo, hi)
 
-        # Apply grid visibility
-        self._plot.showGrid(
-            x=self._result_element.show_grid,
-            y=self._result_element.show_grid,
-            alpha=0.25,
-        )
+    def _on_series_changed(self) -> None:
+        self._draw()
 
     def refresh(self, results_store: "ResultsStore") -> None:
-        """Update with new results (called after re-run)."""
         self._results_store = results_store
-        self._populate()
+        self._draw()
 
-    # ── Crosshair + tooltip ───────────────────────────────────────────────────
-
-    def _on_mouse_moved(self, pos: QPointF) -> None:
-        if not self._plot.sceneBoundingRect().contains(pos):
-            return
-        mp = self._plot.getPlotItem().vb.mapSceneToView(pos)
-        self._vline.setPos(mp.x())
-        self._hline.setPos(mp.y())
-
-        # Show nearest value
-        if self._series_data:
-            label, _, arr = self._series_data[0]
-            time_arr = self._results_store.get_completed_timesteps()
-            idx = int(np.clip(np.searchsorted(time_arr, mp.x()), 0, len(arr)-1))
-            t   = time_arr[idx] if idx < len(time_arr) else mp.x()
-            v   = arr[idx]      if idx < len(arr)       else mp.y()
-            self._coord_label.setText(f"t={t:.1f}  {v:.4g}", color=TEXT_SECONDARY)
-            self._coord_label.setPos(mp.x(), mp.y())
-
-    # ── Export CSV ────────────────────────────────────────────────────────────
-
-    def _export_csv(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export CSV", "results.csv", "CSV files (*.csv)"
-        )
-        if not path:
-            return
+    def export_csv(self, filepath: str) -> None:
         try:
             df = self._results_store.export_dataframe()
-            df.to_csv(path, index=False, float_format="%.6f")
-            QMessageBox.information(self, "Export Complete", f"Saved to:\n{path}")
+            df.to_csv(filepath, index=False, float_format="%.6f")
         except Exception as exc:
             QMessageBox.warning(self, "Export Error", str(exc))
 
 
-# ── ResultWindowManager ───────────────────────────────────────────────────────
+# ── ResultsDashboard ──────────────────────────────────────────────────────────
 
-class ResultWindowManager:
+class ResultsDashboard(QMainWindow):
     """
-    Tracks open HydrographWindows.
-    MainWindow uses this to show/reuse windows and update them after re-run.
+    Single persistent window — one tab per TimeHistoryResult.
+    Stays open across multiple simulation runs; tabs refresh in-place.
     """
 
-    def __init__(self):
-        self._windows: dict[str, HydrographWindow] = {}  # element_id → window
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("HydroSim — Results")
+        self.resize(1000, 620)
+        self.setMinimumSize(700, 480)
+        self.setStyleSheet(f"QMainWindow {{ background: {PANEL_BG}; }}")
+
+        self._tabs:  dict[str, ResultTab] = {}  # element_id → ResultTab
+        self._graph: "ModelGraph | None"  = None
+
+        # Tab widget
+        self._tab_widget = QTabWidget()
+        self._tab_widget.setTabsClosable(False)
+        self._tab_widget.setStyleSheet(
+            f"QTabBar::tab {{ padding: 6px 16px; font-family: {FONT_UI}; font-size: 12px; }}"
+            f"QTabBar::tab:selected {{ font-weight: 600; }}"
+        )
+        self.setCentralWidget(self._tab_widget)
+
+        # Status bar
+        self._status = QStatusBar()
+        self._status.setStyleSheet(
+            f"QStatusBar {{ background: #F5F6FA; "
+            f"border-top: 1px solid {BORDER_SUBTLE}; font-size: 11px; }}"
+        )
+        self.setStatusBar(self._status)
+
+        # Menu
+        self._build_menu()
+
+    def _build_menu(self) -> None:
+        mb = self.menuBar()
+        mb.setStyleSheet(f"background: {PANEL_BG};")
+
+        file_menu = mb.addMenu("File")
+        file_menu.addAction("Export Current Tab CSV…", self._export_current_csv)
+        file_menu.addAction("Export All Tabs CSV…",   self._export_all_csv)
+        file_menu.addSeparator()
+        file_menu.addAction("Close", self.close)
+
+        view_menu = mb.addMenu("View")
+        view_menu.addAction("Zoom to Fit All", self._zoom_fit_all)
+
+    # ── Public API ─────────────────────────────────────────────────────────────
 
     def show_result(
         self,
         result_element: "TimeHistoryResult",
         results_store:  "ResultsStore",
         graph:          "ModelGraph",
-        parent:         QWidget | None = None,
-    ) -> HydrographWindow:
+    ) -> None:
+        self._graph = graph
         eid = result_element.id
-        if eid in self._windows and not self._windows[eid].isHidden():
-            win = self._windows[eid]
-            win.refresh(results_store)
-            win.raise_()
-            win.activateWindow()
-            return win
 
-        win = HydrographWindow(result_element, results_store, graph, parent)
-        self._windows[eid] = win
-        win.show()
-        return win
+        if eid in self._tabs:
+            # Refresh existing tab
+            self._tabs[eid].refresh(results_store)
+            self._select_tab(eid)
+        else:
+            # Create new tab
+            tab = ResultTab(result_element, results_store, graph)
+            self._tabs[eid] = tab
+            title = result_element.title or result_element.name
+            self._tab_widget.addTab(tab, title)
+            self._select_tab(eid)
+
+        self._update_status(results_store)
 
     def refresh_all(self, results_store: "ResultsStore") -> None:
-        """Called after every simulation re-run."""
-        for win in self._windows.values():
-            if not win.isHidden():
-                win.refresh(results_store)
+        for tab in self._tabs.values():
+            tab.refresh(results_store)
+        self._update_status(results_store)
+
+    def close_all_tabs(self) -> None:
+        self._tab_widget.clear()
+        self._tabs.clear()
+
+    # ── Internal helpers ───────────────────────────────────────────────────────
+
+    def _select_tab(self, element_id: str) -> None:
+        tab = self._tabs.get(element_id)
+        if tab:
+            idx = self._tab_widget.indexOf(tab)
+            if idx >= 0:
+                self._tab_widget.setCurrentIndex(idx)
+
+    def _update_status(self, results_store: "ResultsStore") -> None:
+        if results_store:
+            n  = results_store.completed_steps
+            dt = float(results_store.timesteps[1] - results_store.timesteps[0]) \
+                 if len(results_store.timesteps) > 1 else 1.0
+            self._status.showMessage(
+                f"  {n} steps  ·  dt = {dt} day  ·  "
+                f"{results_store.run_duration_s*1000:.0f} ms"
+            )
+
+    def _current_tab(self) -> ResultTab | None:
+        w = self._tab_widget.currentWidget()
+        return w if isinstance(w, ResultTab) else None
+
+    def _export_current_csv(self) -> None:
+        tab = self._current_tab()
+        if not tab:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export CSV", "results.csv", "CSV (*.csv)"
+        )
+        if path:
+            tab.export_csv(path)
+
+    def _export_all_csv(self) -> None:
+        from pathlib import Path
+        dir_path = QFileDialog.getExistingDirectory(self, "Choose export folder")
+        if not dir_path:
+            return
+        for eid, tab in self._tabs.items():
+            name = self._tab_widget.tabText(self._tab_widget.indexOf(tab))
+            path = str(Path(dir_path) / f"{name}.csv")
+            tab.export_csv(path)
+        QMessageBox.information(self, "Export Complete",
+                                f"Exported {len(self._tabs)} file(s) to:\n{dir_path}")
+
+    def _zoom_fit_all(self) -> None:
+        tab = self._current_tab()
+        if tab:
+            tab._plot.ax1.autoscale()
+            tab._plot.canvas.draw_idle()
+
+
+# ── ResultWindowManager (backward-compatible wrapper) ─────────────────────────
+
+class ResultWindowManager:
+    """
+    Thin wrapper used by MainWindow.
+    Maintains a single ResultsDashboard and routes show/refresh calls to it.
+    """
+
+    def __init__(self):
+        self._dashboard: ResultsDashboard | None = None
+
+    def show_result(
+        self,
+        result_element: "TimeHistoryResult",
+        results_store:  "ResultsStore",
+        graph:          "ModelGraph",
+        parent=None,
+    ) -> ResultsDashboard:
+        if self._dashboard is None:
+            self._dashboard = ResultsDashboard(parent)
+
+        self._dashboard.show_result(result_element, results_store, graph)
+        self._dashboard.show()
+        self._dashboard.raise_()
+        self._dashboard.activateWindow()
+        return self._dashboard
+
+    def refresh_all(self, results_store: "ResultsStore") -> None:
+        if self._dashboard and self._dashboard.isVisible():
+            self._dashboard.refresh_all(results_store)
 
     def close_all(self) -> None:
-        for win in self._windows.values():
-            win.close()
-        self._windows.clear()
+        if self._dashboard:
+            self._dashboard.close_all_tabs()
+            self._dashboard.close()
+            self._dashboard = None

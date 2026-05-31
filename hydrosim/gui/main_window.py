@@ -842,12 +842,25 @@ class MainWindow(QMainWindow):
         self.set_simulation_running(False)
         self.set_simulation_complete(results.completed_steps, results.run_duration_s, results)
         self._show_stale_banner(False)
-        # In debug mode, remind user where to look
+        # Auto-open dashboard and populate all result tabs
+        self._open_all_result_tabs(results)
         if self._debug_mode:
             self.log(
                 "[DEBUG] Run complete. Check log above for element snapshots "
-                "and water balance. Double-click a result element to open the chart."
+                "and water balance."
             )
+
+    def _open_all_result_tabs(self, results_store) -> None:
+        """Open / refresh the Results Dashboard with all TimeHistoryResult elements."""
+        from hydrosim.model.elements.timehistory import TimeHistoryResult
+        result_elements = [
+            el for el in self._graph.elements.values()
+            if isinstance(el, TimeHistoryResult)
+        ]
+        if not result_elements:
+            return
+        for el in result_elements:
+            self._result_mgr.show_result(el, results_store, self._graph, parent=self)
 
     def _on_sim_stopped(self, results) -> None:
         self._toolbar.set_simulation_state("stopped")
