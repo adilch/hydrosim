@@ -135,7 +135,7 @@ class _Toolbar(QWidget):
             f"QPushButton {{ background: {OK_GREEN}; border: 1px solid {OK_GREEN}; "
             f"border-radius: 7px; color: white; font-weight: 600; padding: 0 16px; }}"
             f"QPushButton:hover {{ background: #3d9242; }}"
-            f"QPushButton:disabled {{ background: #A8D5AB; border-color: #A8D5AB; }}"
+            f"QPushButton:disabled {{ background: #C8E6C9; border-color: #C8E6C9; color: #4CAF50; }}"
         )
         return btn
 

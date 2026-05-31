@@ -167,7 +167,7 @@ class BaseElementDialog(QDialog):
             "QPushButton { background: #2E86C1; border: 1px solid #2E86C1; "
             "border-radius: 6px; color: white; font-weight: 600; font-size: 13px; }"
             "QPushButton:hover { background: #2877ad; border-color: #2877ad; }"
-            "QPushButton:disabled { background: #A8C8E0; border-color: #A8C8E0; color: white; }"
+            "QPushButton:disabled { background: #DBEAF6; border-color: #DBEAF6; color: #7AAFD4; }"
         )
         ok_btn.clicked.connect(self._on_ok)
         lay.addWidget(ok_btn)

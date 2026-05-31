@@ -1,5 +1,24 @@
 /* HydroSim Global Qt Stylesheet */
 
+/* ── Global text default — dark on all widgets ───────────────────────────── */
+/* Prevents Qt from auto-setting text to white when a parent sets background. */
+QLabel, QCheckBox, QRadioButton, QGroupBox,
+QLineEdit, QTextEdit, QPlainTextEdit,
+QSpinBox, QDoubleSpinBox, QComboBox,
+QListWidget, QListView, QTreeWidget, QTreeView,
+QTableWidget, QTableView,
+QTabBar::tab, QMenuBar, QMenu,
+QStatusBar, QDockWidget, QDockWidget::title {
+    color: #1A1A2E;
+}
+
+/* Disabled state — muted but still readable dark text */
+QLabel:disabled, QCheckBox:disabled, QRadioButton:disabled,
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled,
+QComboBox:disabled {
+    color: #9CA3AF;
+}
+
 /* ── App background ─────────────────────────────────────────────────────── */
 QMainWindow {
     background: #F5F6FA;
@@ -52,9 +71,9 @@ QPushButton[primary="true"]:pressed {
     background: #21699e;
 }
 QPushButton[primary="true"]:disabled {
-    background: #A8C8E0;
-    border-color: #A8C8E0;
-    color: #FFFFFF;
+    background: #DBEAF6;
+    border-color: #DBEAF6;
+    color: #7AAFD4;
 }
 
 QPushButton[danger="true"] {
