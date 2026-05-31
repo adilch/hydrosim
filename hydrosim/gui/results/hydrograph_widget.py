@@ -176,7 +176,8 @@ class SeriesManagerPanel(QWidget):
 
     def __init__(self, configs: list[SeriesConfig], parent=None):
         super().__init__(parent)
-        self.setFixedWidth(250)
+        self.setMinimumWidth(160)
+        self.setMaximumWidth(500)
         self.setStyleSheet(
             f"background: {PANEL_BG}; border-right: 1px solid {BORDER_SUBTLE};"
         )
@@ -248,7 +249,6 @@ class PlotCanvas(QWidget):
         self.setStyleSheet("background: white;")
 
         self.fig = Figure(facecolor="white")
-        self.fig.subplots_adjust(left=0.09, right=0.91, top=0.93, bottom=0.10)
 
         self.ax1 = self.fig.add_subplot(111)   # left Y-axis
         self.ax2 = self.ax1.twinx()            # right Y-axis
@@ -271,10 +271,11 @@ class PlotCanvas(QWidget):
 
     def redraw(
         self,
-        time_arr:      np.ndarray,
-        configs:       list[SeriesConfig],
-        results_store: "ResultsStore",
+        time_arr:       np.ndarray,
+        configs:        list[SeriesConfig],
+        results_store:  "ResultsStore",
         result_element: "TimeHistoryResult",
+        legend_loc:     str = "best",
     ) -> None:
         """Clear and redraw all visible series."""
         self.ax1.cla()
@@ -333,14 +334,35 @@ class PlotCanvas(QWidget):
         if result_element.y_max is not None:
             self.ax1.set_ylim(top=result_element.y_max)
 
-        # Legend — combine both axes
-        if lines_for_legend:
-            self.ax1.legend(
-                handles=lines_for_legend,
-                loc="best",
-                framealpha=0.85,
-                edgecolor="#DDDDDD",
-            )
+        # Legend — position controlled by caller
+        # Remove any existing legend from both axes first
+        for ax in (self.ax1, self.ax2):
+            if ax.get_legend():
+                ax.get_legend().remove()
+
+        if lines_for_legend and legend_loc != "none":
+            if legend_loc == "outside right":
+                # Place legend to the right of the plot area
+                self.fig.subplots_adjust(left=0.09, right=0.78, top=0.93, bottom=0.10)
+                self.ax1.legend(
+                    handles=lines_for_legend,
+                    loc="upper left",
+                    bbox_to_anchor=(1.01, 1),
+                    borderaxespad=0,
+                    framealpha=0.9,
+                    edgecolor="#DDDDDD",
+                )
+            else:
+                self.fig.subplots_adjust(left=0.09, right=0.91, top=0.93, bottom=0.10)
+                self.ax1.legend(
+                    handles=lines_for_legend,
+                    loc=legend_loc,
+                    framealpha=0.85,
+                    edgecolor="#DDDDDD",
+                )
+        else:
+            # "none" or no series — restore normal margins
+            self.fig.subplots_adjust(left=0.09, right=0.91, top=0.93, bottom=0.10)
 
         # Grid on primary axis only
         self.ax1.grid(True, which="major", color="#EEEEEE", linewidth=0.8, zorder=0)
@@ -506,19 +528,36 @@ class ResultTab(QWidget):
         self._build_configs()
 
         # ── Layout ────────────────────────────────────────────────────────
-        root = QHBoxLayout(self)
+        root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        # Horizontal splitter: series panel | right content
+        from PyQt6.QtWidgets import QSplitter as _HSplit
+        self._h_splitter = _HSplit(Qt.Orientation.Horizontal)
+        self._h_splitter.setHandleWidth(4)
+        self._h_splitter.setChildrenCollapsible(False)
+        self._h_splitter.setStyleSheet(
+            "QSplitter::handle:horizontal { background: #E7E9EE; "
+            "border-left: 1px solid #D5D9E0; }"
+            "QSplitter::handle:horizontal:hover { background: #D0D5DE; }"
+        )
+        root.addWidget(self._h_splitter)
 
         # Left: series manager
         self._series_panel = SeriesManagerPanel(self._configs)
         self._series_panel.series_changed.connect(self._on_series_changed)
-        root.addWidget(self._series_panel)
+        self._h_splitter.addWidget(self._series_panel)
 
-        # Right: toggle bar + stacked widget
-        right_col = QVBoxLayout()
+        # Right container: toggle bar + stacked widget
+        right_w = QWidget()
+        right_col = QVBoxLayout(right_w)
         right_col.setContentsMargins(0, 0, 0, 0)
         right_col.setSpacing(0)
+        self._h_splitter.addWidget(right_w)
+        self._h_splitter.setSizes([250, 9999])
+        self._h_splitter.setStretchFactor(0, 0)
+        self._h_splitter.setStretchFactor(1, 1)
 
         # ── Toggle bar ─────────────────────────────────────────────────
         toggle_bar = QWidget()
@@ -554,6 +593,40 @@ class ResultTab(QWidget):
         tb_lay.addWidget(self._btn_chart)
         tb_lay.addWidget(self._btn_table)
         tb_lay.addStretch()
+
+        # Legend position dropdown
+        _leg_lbl = QLabel("Legend:")
+        _leg_lbl.setFont(QFont(FONT_UI, 10))
+        _leg_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
+        tb_lay.addWidget(_leg_lbl)
+
+        self._legend_combo = QComboBox()
+        self._legend_combo.setFont(QFont(FONT_UI, 10))
+        self._legend_combo.setFixedHeight(24)
+        self._legend_combo.setFixedWidth(130)
+        self._legend_combo.setStyleSheet(
+            f"QComboBox {{ border: 1px solid {BORDER_SUBTLE}; border-radius: 5px; "
+            f"background: {PANEL_BG}; color: {TEXT_PRIMARY}; padding: 0 6px; }}"
+        )
+        # (display label, matplotlib loc string)
+        _legend_opts = [
+            ("Best (auto)",   "best"),
+            ("Upper right",   "upper right"),
+            ("Upper left",    "upper left"),
+            ("Lower right",   "lower right"),
+            ("Lower left",    "lower left"),
+            ("Upper centre",  "upper center"),
+            ("Lower centre",  "lower center"),
+            ("Centre right",  "center right"),
+            ("Outside right", "outside right"),   # handled manually
+            ("Hidden",        "none"),
+        ]
+        for display, loc in _legend_opts:
+            self._legend_combo.addItem(display, loc)
+        self._legend_combo.setCurrentIndex(0)   # "Best" by default
+        self._legend_combo.currentIndexChanged.connect(self._on_legend_changed)
+        tb_lay.addWidget(self._legend_combo)
+
         right_col.addWidget(toggle_bar)
 
         # ── Range bar ──────────────────────────────────────────────────
@@ -646,15 +719,19 @@ class ResultTab(QWidget):
 
         right_col.addWidget(self._stack, stretch=1)
 
-        right_w = QWidget()
-        right_w.setLayout(right_col)
-        root.addWidget(right_w, stretch=1)
-
         self._btn_style_active   = btn_style_active
         self._btn_style_inactive = btn_style_inactive
 
         # Initial draw
         self._draw()
+
+    def _on_legend_changed(self, _idx: int = 0) -> None:
+        """User selected a new legend position — redraw the chart."""
+        self._draw()
+
+    def _get_legend_loc(self) -> str:
+        """Return the matplotlib loc string for the current dropdown selection."""
+        return self._legend_combo.currentData()
 
     def _switch_view(self, index: int) -> None:
         """Toggle between chart (0) and data table (1)."""
@@ -750,9 +827,10 @@ class ResultTab(QWidget):
             self._configs.append(cfg)
 
     def _draw(self) -> None:
-        time_arr = self._results_store.get_completed_timesteps()
+        time_arr   = self._results_store.get_completed_timesteps()
+        legend_loc = self._get_legend_loc()
         self._plot.redraw(time_arr, self._configs, self._results_store,
-                          self._result_element)
+                          self._result_element, legend_loc=legend_loc)
         # Table is populated lazily when user switches to table view
 
     def _on_series_changed(self) -> None:
