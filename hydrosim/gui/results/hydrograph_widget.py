@@ -28,7 +28,7 @@ from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QCheckBox, QColorDialog, QComboBox, QFileDialog, QHBoxLayout,
     QHeaderView, QLabel, QMainWindow, QMessageBox, QPushButton,
-    QScrollArea, QSizePolicy, QSplitter, QStatusBar,
+    QScrollArea, QSizePolicy, QStackedWidget, QStatusBar,
     QTabWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
@@ -267,12 +267,7 @@ class PlotCanvas(QWidget):
         lay.addWidget(self.toolbar)
         lay.addWidget(self.canvas, stretch=1)
 
-        # Notify data table when view changes
-        self.ax1.callbacks.connect("xlim_changed", self._emit_xlim)
-
-    def _emit_xlim(self, ax) -> None:
-        lo, hi = ax.get_xlim()
-        self.xlim_changed.emit(lo, hi)
+        pass  # no xlim signal needed — table always shows full range
 
     def redraw(
         self,
@@ -363,31 +358,21 @@ class PlotCanvas(QWidget):
     def get_xlim(self) -> tuple[float, float]:
         return self.ax1.get_xlim()
 
+    # xlim_changed kept as a no-op signal for backward compat
+    xlim_changed = pyqtSignal(float, float)
+
 
 # ── DataTableWidget ───────────────────────────────────────────────────────────
 
 class DataTableWidget(QWidget):
     """
-    Shows the data for the currently-visible X range (Option A).
-    Updated whenever the chart is panned or zoomed.
-    Debounced to 250 ms so rapid drags don't cause lag.
+    Full-range data table — shows every completed timestep.
+    Populated once when set_data() is called; no xlim sync needed.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(f"background: {PANEL_BG};")
-
-        self._time_arr:      np.ndarray | None = None
-        self._configs:       list[SeriesConfig] = []
-        self._results_store: "ResultsStore | None" = None
-        self._has_dates:     bool = False
-        self._start_date     = None
-
-        self._debounce = QTimer(self)
-        self._debounce.setSingleShot(True)
-        self._debounce.setInterval(250)
-        self._debounce.timeout.connect(self._refresh_table)
-        self._pending_xlim: tuple[float, float] | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -395,21 +380,24 @@ class DataTableWidget(QWidget):
 
         # Header bar
         hdr = QWidget()
-        hdr.setFixedHeight(28)
+        hdr.setFixedHeight(30)
         hdr.setStyleSheet(
-            f"background: #F5F6FA; border-top: 1px solid {BORDER_SUBTLE}; "
-            f"border-bottom: 1px solid {BORDER_SUBTLE};"
+            f"background: #F5F6FA; border-bottom: 1px solid {BORDER_SUBTLE};"
         )
         hdr_lay = QHBoxLayout(hdr)
-        hdr_lay.setContentsMargins(8, 0, 8, 0)
-        title = QLabel("Data Table  (visible range)")
-        title.setFont(QFont(FONT_UI, 9))
-        title.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 600; background: transparent;")
-        hdr_lay.addWidget(title)
+        hdr_lay.setContentsMargins(10, 0, 10, 0)
+        title_lbl = QLabel("Data Table — full simulation range")
+        title_lbl.setFont(QFont(FONT_UI, 9))
+        title_lbl.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-weight: 600; background: transparent;"
+        )
+        hdr_lay.addWidget(title_lbl)
         hdr_lay.addStretch()
         self._row_count_lbl = QLabel()
         self._row_count_lbl.setFont(QFont(FONT_MONO, 9))
-        self._row_count_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
+        self._row_count_lbl.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; background: transparent;"
+        )
         hdr_lay.addWidget(self._row_count_lbl)
         root.addWidget(hdr)
 
@@ -419,13 +407,15 @@ class DataTableWidget(QWidget):
         self._table.setFont(QFont(FONT_MONO, 9))
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
         self._table.setStyleSheet(
             f"QTableWidget {{ border: none; background: white; "
             f"alternate-background-color: #F9FAFB; gridline-color: #F0F1F5; }}"
             f"QHeaderView::section {{ background: #F5F6FA; color: {TEXT_PRIMARY}; "
-            f"font-weight: 600; border: none; border-bottom: 1px solid {BORDER_SUBTLE}; "
-            f"padding: 4px 6px; }}"
+            f"font-weight: 600; border: none; "
+            f"border-bottom: 1px solid {BORDER_SUBTLE}; padding: 4px 8px; }}"
         )
         root.addWidget(self._table, stretch=1)
 
@@ -434,78 +424,36 @@ class DataTableWidget(QWidget):
         time_arr:      np.ndarray,
         configs:       list[SeriesConfig],
         results_store: "ResultsStore",
-        has_dates:     bool = False,
-        start_date     = None,
     ) -> None:
-        self._time_arr      = time_arr
-        self._configs       = configs
-        self._results_store = results_store
-        self._has_dates     = has_dates
-        self._start_date    = start_date
-        self._refresh_table()
-
-    def on_xlim_changed(self, lo: float, hi: float) -> None:
-        """Called when chart view changes — debounced."""
-        self._pending_xlim = (lo, hi)
-        self._debounce.start()
-
-    def _refresh_table(self) -> None:
-        if self._time_arr is None or self._results_store is None:
+        """Populate with all completed timesteps."""
+        if time_arr is None or results_store is None:
             return
 
-        lo, hi = self._pending_xlim or (self._time_arr[0], self._time_arr[-1])
-        mask = (self._time_arr >= lo) & (self._time_arr <= hi)
-        t_vis = self._time_arr[mask]
-        n_vis = len(t_vis)
+        n       = results_store.completed_steps
+        t_all   = time_arr[:n]
+        visible = [c for c in configs if c.visible]
 
-        # Build visible series configs
-        visible = [c for c in self._configs if c.visible]
-
-        # Set columns
-        cols = ["Time (days)"]
-        if self._has_dates:
-            cols.insert(0, "Date")
-        cols += [c.label for c in visible]
-
+        cols = ["Time (days)"] + [c.label for c in visible]
         self._table.setColumnCount(len(cols))
         self._table.setHorizontalHeaderLabels(cols)
-        self._table.setRowCount(n_vis)
+        self._table.setRowCount(n)
 
-        # Dates
-        dates = []
-        if self._has_dates and self._start_date is not None:
-            import pandas as pd
-            dates = pd.date_range(
-                start=self._start_date, periods=len(self._time_arr), freq="D"
-            )[mask].strftime("%Y-%m-%d").tolist()
+        for row, t in enumerate(t_all):
+            self._table.setItem(row, 0, QTableWidgetItem(f"{t:.2f}"))
 
-        col_offset = 0
-        if self._has_dates:
-            for row, d in enumerate(dates):
-                self._table.setItem(row, 0, QTableWidgetItem(d))
-            col_offset = 1
-
-        # Time column
-        for row, t in enumerate(t_vis):
-            self._table.setItem(row, col_offset, QTableWidgetItem(f"{t:.2f}"))
-
-        # Series columns
         for ci, cfg in enumerate(visible):
             try:
-                arr = self._results_store.get_series(cfg.element_id, cfg.port_name)
+                arr = results_store.get_series(cfg.element_id, cfg.port_name)
             except KeyError:
                 continue
-            n_completed = self._results_store.completed_steps
-            full_t      = self._time_arr
-            vis_indices = np.where(mask)[0]
-            for row, idx in enumerate(vis_indices):
-                if idx < n_completed:
-                    val = arr[idx]
-                    item = QTableWidgetItem(f"{val:.4f}")
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                    self._table.setItem(row, col_offset + 1 + ci, item)
+            for row in range(n):
+                item = QTableWidgetItem(f"{arr[row]:.4f}")
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
+                self._table.setItem(row, 1 + ci, item)
 
-        self._row_count_lbl.setText(f"{n_vis} rows")
+        self._row_count_lbl.setText(f"{n} rows")
 
 
 # ── ResultTab ─────────────────────────────────────────────────────────────────
@@ -540,26 +488,80 @@ class ResultTab(QWidget):
         self._series_panel.series_changed.connect(self._on_series_changed)
         root.addWidget(self._series_panel)
 
-        # Right: plot + table in a vertical splitter
-        right_split = QSplitter(Qt.Orientation.Vertical)
-        right_split.setHandleWidth(4)
-        right_split.setStyleSheet(
-            "QSplitter::handle { background: #E7E9EE; }"
+        # Right: toggle bar + stacked widget
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(0)
+
+        # ── Toggle bar ─────────────────────────────────────────────────
+        toggle_bar = QWidget()
+        toggle_bar.setFixedHeight(34)
+        toggle_bar.setStyleSheet(
+            f"background: #F5F6FA; border-bottom: 1px solid {BORDER_SUBTLE};"
+        )
+        tb_lay = QHBoxLayout(toggle_bar)
+        tb_lay.setContentsMargins(10, 0, 10, 0)
+        tb_lay.setSpacing(4)
+
+        btn_style_active = (
+            f"QPushButton {{ background: #2E86C1; color: white; border: none; "
+            f"border-radius: 5px; padding: 3px 14px; font-weight: 600; font-size: 11px; }}"
+        )
+        btn_style_inactive = (
+            f"QPushButton {{ background: transparent; color: {TEXT_SECONDARY}; "
+            f"border: 1px solid {BORDER_SUBTLE}; border-radius: 5px; "
+            f"padding: 3px 14px; font-size: 11px; }}"
+            f"QPushButton:hover {{ background: #EEF0F4; color: {TEXT_PRIMARY}; }}"
         )
 
-        self._plot    = PlotCanvas()
-        self._table   = DataTableWidget()
-        right_split.addWidget(self._plot)
-        right_split.addWidget(self._table)
-        right_split.setSizes([340, 160])   # chart gets more space by default
+        self._btn_chart = QPushButton("Chart")
+        self._btn_table = QPushButton("Data Table")
+        for b in (self._btn_chart, self._btn_table):
+            b.setFixedHeight(24)
+            b.setFont(QFont(FONT_UI, 11))
+        self._btn_chart.setStyleSheet(btn_style_active)
+        self._btn_table.setStyleSheet(btn_style_inactive)
+        self._btn_chart.clicked.connect(lambda: self._switch_view(0))
+        self._btn_table.clicked.connect(lambda: self._switch_view(1))
 
-        root.addWidget(right_split, stretch=1)
+        tb_lay.addWidget(self._btn_chart)
+        tb_lay.addWidget(self._btn_table)
+        tb_lay.addStretch()
+        right_col.addWidget(toggle_bar)
 
-        # Wire xlim → table
-        self._plot.xlim_changed.connect(self._table.on_xlim_changed)
+        # ── Stacked widget ─────────────────────────────────────────────
+        self._stack = QStackedWidget()
+
+        self._plot  = PlotCanvas()
+        self._table = DataTableWidget()
+        self._stack.addWidget(self._plot)    # index 0 = chart
+        self._stack.addWidget(self._table)   # index 1 = table
+        self._stack.setCurrentIndex(0)       # chart by default
+
+        right_col.addWidget(self._stack, stretch=1)
+
+        right_w = QWidget()
+        right_w.setLayout(right_col)
+        root.addWidget(right_w, stretch=1)
+
+        self._btn_style_active   = btn_style_active
+        self._btn_style_inactive = btn_style_inactive
 
         # Initial draw
         self._draw()
+
+    def _switch_view(self, index: int) -> None:
+        """Toggle between chart (0) and data table (1)."""
+        self._stack.setCurrentIndex(index)
+        if index == 0:
+            self._btn_chart.setStyleSheet(self._btn_style_active)
+            self._btn_table.setStyleSheet(self._btn_style_inactive)
+        else:
+            self._btn_chart.setStyleSheet(self._btn_style_inactive)
+            self._btn_table.setStyleSheet(self._btn_style_active)
+            # Populate table with full data when switching to table view
+            time_arr = self._results_store.get_completed_timesteps()
+            self._table.set_data(time_arr, self._configs, self._results_store)
 
     def _build_configs(self) -> None:
         """Create a SeriesConfig for each connection feeding this result element."""
@@ -582,14 +584,7 @@ class ResultTab(QWidget):
         time_arr = self._results_store.get_completed_timesteps()
         self._plot.redraw(time_arr, self._configs, self._results_store,
                           self._result_element)
-
-        has_dates  = self._results_store.timesteps is not None
-        start_date = None
-        # Check if settings had a calendar start date (stored in metadata)
-        self._table.set_data(time_arr, self._configs, self._results_store)
-        # Sync table to current view
-        lo, hi = self._plot.get_xlim()
-        self._table.on_xlim_changed(lo, hi)
+        # Table is populated lazily when user switches to table view
 
     def _on_series_changed(self) -> None:
         self._draw()
