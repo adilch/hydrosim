@@ -163,9 +163,12 @@ class BaseElementDialog(QDialog):
 
         ok_btn = QPushButton("OK")
         ok_btn.setFixedSize(80, 34)
-        ok_btn.setProperty("primary", True)
-        ok_btn.style().unpolish(ok_btn)
-        ok_btn.style().polish(ok_btn)
+        ok_btn.setStyleSheet(
+            "QPushButton { background: #2E86C1; border: 1px solid #2E86C1; "
+            "border-radius: 6px; color: white; font-weight: 600; font-size: 13px; }"
+            "QPushButton:hover { background: #2877ad; border-color: #2877ad; }"
+            "QPushButton:disabled { background: #A8C8E0; border-color: #A8C8E0; color: white; }"
+        )
         ok_btn.clicked.connect(self._on_ok)
         lay.addWidget(ok_btn)
         return w, ok_btn
