@@ -199,8 +199,8 @@ class _ChartToolbar(QWidget):
         btn.setToolTip(tip)
         btn.setStyleSheet(
             f"QPushButton {{ border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; "
-            f"background: {PANEL_BG}; color: {TEXT_SECONDARY}; }}"
-            f"QPushButton:hover {{ background: #F4F6F9; color: {TEXT_PRIMARY}; }}"
+            f"background: {PANEL_BG}; color: {TEXT_PRIMARY}; }}"
+            f"QPushButton:hover {{ background: #EEF0F4; color: {TEXT_PRIMARY}; }}"
         )
         btn.clicked.connect(slot)
         return btn
@@ -297,12 +297,12 @@ class HydrographWindow(QWidget):
         )
         self._plot.setLabel("bottom", "Time", units="days", color=TEXT_PRIMARY)
 
-        # Style axes
+        # Style axes — use TEXT_PRIMARY for readable tick labels
         for axis_name in ("left", "bottom"):
             ax = self._plot.getAxis(axis_name)
-            ax.setTextPen(QColor(TEXT_SECONDARY))
-            ax.setPen(QColor(BORDER_SUBTLE))
-            ax.setTickFont(QFont(FONT_MONO, 9))
+            ax.setTextPen(QColor(TEXT_PRIMARY))      # dark, readable tick numbers
+            ax.setPen(QColor("#AAAAAA"))              # visible axis line
+            ax.setTickFont(QFont(FONT_MONO, 10))     # slightly larger ticks
 
         # Manual Y range if specified
         if self._result_element.y_min is not None and self._result_element.y_max is not None:
@@ -315,7 +315,7 @@ class HydrographWindow(QWidget):
                                       pen=pg.mkPen(color="#AAAAAA", width=1, style=Qt.PenStyle.DashLine))
         self._plot.addItem(self._vline, ignoreBounds=True)
         self._plot.addItem(self._hline, ignoreBounds=True)
-        self._coord_label = pg.TextItem(anchor=(0, 1), color=TEXT_SECONDARY)
+        self._coord_label = pg.TextItem(anchor=(0, 1), color=TEXT_PRIMARY)
         self._plot.addItem(self._coord_label)
         self._plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
 

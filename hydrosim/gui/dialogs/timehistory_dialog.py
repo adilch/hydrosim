@@ -60,23 +60,25 @@ class TimeHistoryDialog(BaseElementDialog):
         lay.addWidget(self._field_label("Y-axis Range"))
         row3 = QHBoxLayout(); row3.setSpacing(12)
 
-        minc = QVBoxLayout(); minc.addWidget(QLabel("Minimum"))
+        minc = QVBoxLayout(); minc.addWidget(self._field_label("Minimum"))
         mrow = QHBoxLayout(); mrow.setSpacing(6)
         self._ymin_spin = self._make_spin(
             self.element.y_min if self.element.y_min is not None else 0.0
         )
         self._ymin_auto = QCheckBox("Auto")
+        self._ymin_auto.setFont(QFont(FONT_UI, 12))
         self._ymin_auto.setChecked(self.element.y_min is None)
         self._ymin_spin.setEnabled(self.element.y_min is not None)
         mrow.addWidget(self._ymin_spin); mrow.addWidget(self._ymin_auto)
         minc.addLayout(mrow); row3.addLayout(minc)
 
-        maxc = QVBoxLayout(); maxc.addWidget(QLabel("Maximum"))
+        maxc = QVBoxLayout(); maxc.addWidget(self._field_label("Maximum"))
         xrow = QHBoxLayout(); xrow.setSpacing(6)
         self._ymax_spin = self._make_spin(
             self.element.y_max if self.element.y_max is not None else 150.0
         )
         self._ymax_auto = QCheckBox("Auto")
+        self._ymax_auto.setFont(QFont(FONT_UI, 12))
         self._ymax_auto.setChecked(self.element.y_max is None)
         self._ymax_spin.setEnabled(self.element.y_max is not None)
         xrow.addWidget(self._ymax_spin); xrow.addWidget(self._ymax_auto)
