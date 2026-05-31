@@ -411,8 +411,9 @@ class DataTableWidget(QWidget):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self._table.setStyleSheet(
-            f"QTableWidget {{ border: none; background: white; "
+            f"QTableWidget {{ border: none; background: white; color: {TEXT_PRIMARY}; "
             f"alternate-background-color: #F9FAFB; gridline-color: #F0F1F5; }}"
+            f"QTableWidget::item {{ color: {TEXT_PRIMARY}; padding: 2px 6px; }}"
             f"QHeaderView::section {{ background: #F5F6FA; color: {TEXT_PRIMARY}; "
             f"font-weight: 600; border: none; "
             f"border-bottom: 1px solid {BORDER_SUBTLE}; padding: 4px 8px; }}"
@@ -424,36 +425,62 @@ class DataTableWidget(QWidget):
         time_arr:      np.ndarray,
         configs:       list[SeriesConfig],
         results_store: "ResultsStore",
+        x_lo:          float | None = None,
+        x_hi:          float | None = None,
     ) -> None:
-        """Populate with all completed timesteps."""
+        """
+        Populate the table. If x_lo/x_hi are given only rows in that
+        range are shown; otherwise the full simulation range is displayed.
+        """
         if time_arr is None or results_store is None:
             return
 
-        n       = results_store.completed_steps
-        t_all   = time_arr[:n]
+        n     = results_store.completed_steps
+        t_all = time_arr[:n]
+
+        # Apply optional X filter
+        if x_lo is not None or x_hi is not None:
+            lo   = x_lo if x_lo is not None else float(t_all[0])
+            hi   = x_hi if x_hi is not None else float(t_all[-1])
+            mask = (t_all >= lo) & (t_all <= hi)
+        else:
+            mask = np.ones(n, dtype=bool)
+
+        t_vis   = t_all[mask]
+        indices = np.where(mask)[0]
+        n_vis   = len(t_vis)
         visible = [c for c in configs if c.visible]
 
         cols = ["Time (days)"] + [c.label for c in visible]
         self._table.setColumnCount(len(cols))
         self._table.setHorizontalHeaderLabels(cols)
-        self._table.setRowCount(n)
+        self._table.setRowCount(n_vis)
 
-        for row, t in enumerate(t_all):
-            self._table.setItem(row, 0, QTableWidgetItem(f"{t:.2f}"))
+        fg = QColor(TEXT_PRIMARY)
+        for row, t in enumerate(t_vis):
+            item = QTableWidgetItem(f"{t:.2f}")
+            item.setForeground(fg)
+            self._table.setItem(row, 0, item)
 
         for ci, cfg in enumerate(visible):
             try:
                 arr = results_store.get_series(cfg.element_id, cfg.port_name)
             except KeyError:
                 continue
-            for row in range(n):
-                item = QTableWidgetItem(f"{arr[row]:.4f}")
+            for row, idx in enumerate(indices):
+                item = QTableWidgetItem(f"{arr[idx]:.4f}")
                 item.setTextAlignment(
                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 )
+                item.setForeground(fg)
                 self._table.setItem(row, 1 + ci, item)
 
-        self._row_count_lbl.setText(f"{n} rows")
+        if x_lo is not None or x_hi is not None:
+            self._row_count_lbl.setText(
+                f"{n_vis} rows  ({x_lo:.1f} – {x_hi:.1f} days)"
+            )
+        else:
+            self._row_count_lbl.setText(f"{n_vis} rows (full range)")
 
 
 # ── ResultTab ─────────────────────────────────────────────────────────────────
@@ -529,6 +556,85 @@ class ResultTab(QWidget):
         tb_lay.addStretch()
         right_col.addWidget(toggle_bar)
 
+        # ── Range bar ──────────────────────────────────────────────────
+        from PyQt6.QtWidgets import QDoubleSpinBox as _DSB
+        range_bar = QWidget()
+        range_bar.setFixedHeight(34)
+        range_bar.setStyleSheet(
+            f"background: {PANEL_BG}; border-bottom: 1px solid {BORDER_SUBTLE};"
+        )
+        rb_lay = QHBoxLayout(range_bar)
+        rb_lay.setContentsMargins(10, 0, 10, 0)
+        rb_lay.setSpacing(6)
+
+        def _lbl(text):
+            l = QLabel(text)
+            l.setFont(QFont(FONT_UI, 10))
+            l.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
+            return l
+
+        def _spin(lo, hi, val, dec=1):
+            s = _DSB()
+            s.setRange(lo, hi)
+            s.setDecimals(dec)
+            s.setValue(val)
+            s.setFixedWidth(80)
+            s.setFont(QFont(FONT_MONO, 10))
+            s.setSpecialValueText("Auto")
+            return s
+
+        # Compute data range once for spin limits
+        _t0 = float(self._results_store.get_completed_timesteps()[0])
+        _t1 = float(self._results_store.get_completed_timesteps()[-1])
+
+        rb_lay.addWidget(_lbl("X:"))
+        self._x_lo = _spin(_t0 - 1, _t1 + 1, _t0)
+        self._x_hi = _spin(_t0 - 1, _t1 + 1, _t1)
+        rb_lay.addWidget(self._x_lo)
+        rb_lay.addWidget(_lbl("–"))
+        rb_lay.addWidget(self._x_hi)
+
+        rb_lay.addSpacing(16)
+        rb_lay.addWidget(_lbl("Y:"))
+        self._y_lo = _spin(-1e9, 1e9, _DSB().minimum(), dec=2)
+        self._y_lo.setRange(-1e9, 1e9); self._y_lo.setValue(self._y_lo.minimum())
+        self._y_lo.setSpecialValueText("Auto")
+        self._y_hi = _spin(-1e9, 1e9, _DSB().maximum(), dec=2)
+        self._y_hi.setRange(-1e9, 1e9); self._y_hi.setValue(self._y_hi.maximum())
+        self._y_hi.setSpecialValueText("Auto")
+        rb_lay.addWidget(self._y_lo)
+        rb_lay.addWidget(_lbl("–"))
+        rb_lay.addWidget(self._y_hi)
+
+        rb_lay.addSpacing(10)
+        apply_btn = QPushButton("Apply")
+        apply_btn.setFixedSize(56, 24)
+        apply_btn.setFont(QFont(FONT_UI, 10))
+        apply_btn.setStyleSheet(
+            f"QPushButton {{ background: #2E86C1; color: white; border: none; "
+            f"border-radius: 4px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: #2877ad; }}"
+        )
+        apply_btn.clicked.connect(self._apply_range)
+
+        reset_btn = QPushButton("Reset")
+        reset_btn.setFixedSize(50, 24)
+        reset_btn.setFont(QFont(FONT_UI, 10))
+        reset_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {TEXT_SECONDARY}; "
+            f"border: 1px solid {BORDER_SUBTLE}; border-radius: 4px; }}"
+            f"QPushButton:hover {{ background: #EEF0F4; color: {TEXT_PRIMARY}; }}"
+        )
+        reset_btn.clicked.connect(self._reset_range)
+
+        rb_lay.addWidget(apply_btn)
+        rb_lay.addWidget(reset_btn)
+        right_col.addWidget(range_bar)
+
+        # Store refs for reset
+        self._t0 = _t0
+        self._t1 = _t1
+
         # ── Stacked widget ─────────────────────────────────────────────
         self._stack = QStackedWidget()
 
@@ -559,9 +665,72 @@ class ResultTab(QWidget):
         else:
             self._btn_chart.setStyleSheet(self._btn_style_inactive)
             self._btn_table.setStyleSheet(self._btn_style_active)
-            # Populate table with full data when switching to table view
+            # Populate table with current X range
+            self._refresh_table()
+
+    def _get_range(self) -> tuple[float | None, float | None, float | None, float | None]:
+        """Read spin-box values. Returns (x_lo, x_hi, y_lo, y_hi); None = Auto."""
+        from PyQt6.QtWidgets import QDoubleSpinBox as _DSB
+        x_lo = self._x_lo.value() if self._x_lo.value() != self._x_lo.minimum() else None
+        x_hi = self._x_hi.value() if self._x_hi.value() != self._x_hi.maximum() else None
+        y_lo = self._y_lo.value() if self._y_lo.value() != self._y_lo.minimum() else None
+        y_hi = self._y_hi.value() if self._y_hi.value() != self._y_hi.maximum() else None
+        # Use spin values as set (they start at t0/t1, not min/max)
+        x_lo = self._x_lo.value()
+        x_hi = self._x_hi.value()
+        y_lo = None if self._y_lo.value() <= -1e8 else self._y_lo.value()
+        y_hi = None if self._y_hi.value() >= 1e8  else self._y_hi.value()
+        return x_lo, x_hi, y_lo, y_hi
+
+    def _apply_range(self) -> None:
+        """Apply X/Y axis range to both chart and table."""
+        x_lo, x_hi, y_lo, y_hi = self._get_range()
+        ax = self._plot.ax1
+
+        # X range — chart
+        ax.set_xlim(x_lo, x_hi)
+
+        # Y range — chart (left axis)
+        if y_lo is not None or y_hi is not None:
+            lo = y_lo if y_lo is not None else ax.get_ylim()[0]
+            hi = y_hi if y_hi is not None else ax.get_ylim()[1]
+            ax.set_ylim(lo, hi)
+
+        self._plot.canvas.draw_idle()
+
+        # Update table with filtered rows
+        if self._stack.currentIndex() == 1:
+            self._refresh_table()
+
+    def _reset_range(self) -> None:
+        """Reset chart to full auto-range and table to full data."""
+        # Reset spinboxes
+        self._x_lo.setValue(self._t0)
+        self._x_hi.setValue(self._t1)
+        self._y_lo.setValue(-1e9)
+        self._y_hi.setValue(1e9)
+
+        # Reset chart axes
+        self._plot.ax1.autoscale()
+        self._plot.canvas.draw_idle()
+
+        # Reset table to full range
+        if self._stack.currentIndex() == 1:
             time_arr = self._results_store.get_completed_timesteps()
             self._table.set_data(time_arr, self._configs, self._results_store)
+
+    def _refresh_table(self) -> None:
+        """Populate the table using the current X range from spinboxes."""
+        time_arr = self._results_store.get_completed_timesteps()
+        x_lo = self._x_lo.value()
+        x_hi = self._x_hi.value()
+        # If range == full range, pass None (shows "full range" in header)
+        is_full = (abs(x_lo - self._t0) < 0.01 and abs(x_hi - self._t1) < 0.01)
+        self._table.set_data(
+            time_arr, self._configs, self._results_store,
+            x_lo=None if is_full else x_lo,
+            x_hi=None if is_full else x_hi,
+        )
 
     def _build_configs(self) -> None:
         """Create a SeriesConfig for each connection feeding this result element."""
@@ -591,6 +760,14 @@ class ResultTab(QWidget):
 
     def refresh(self, results_store: "ResultsStore") -> None:
         self._results_store = results_store
+        t = results_store.get_completed_timesteps()
+        if len(t):
+            self._t0 = float(t[0])
+            self._t1 = float(t[-1])
+            self._x_lo.setValue(self._t0)
+            self._x_hi.setValue(self._t1)
+            self._x_lo.setRange(self._t0 - 1, self._t1 + 1)
+            self._x_hi.setRange(self._t0 - 1, self._t1 + 1)
         self._draw()
 
     def export_csv(self, filepath: str) -> None:
