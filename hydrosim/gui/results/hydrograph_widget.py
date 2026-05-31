@@ -169,17 +169,18 @@ class _ChartToolbar(QWidget):
         self._plot = plot_widget
         self.setFixedHeight(38)
         self.setStyleSheet(
-            f"background: #FBFBFD; border-top: 1px solid #EEF0F4;"
+            "background: #FBFBFD; border-top: 1px solid #EEF0F4;"
+            " QLabel { background: transparent; color: #1A1A2E; }"
         )
         lay = QHBoxLayout(self)
         lay.setContentsMargins(14, 0, 14, 0)
         lay.setSpacing(4)
 
         for label, tooltip, slot in [
-            ("⌂", "Reset view",    self._reset_view),
-            ("🔍+", "Zoom in",     self._zoom_in),
-            ("🔍−", "Zoom out",    self._zoom_out),
-            ("💾", "Save as PNG",  self._save_png),
+            ("Reset",   "Reset view",   self._reset_view),
+            ("Zoom +",  "Zoom in",      self._zoom_in),
+            ("Zoom -",  "Zoom out",     self._zoom_out),
+            ("PNG",     "Save as PNG",  self._save_png),
         ]:
             btn = self._tbtn(label, tooltip, slot)
             lay.addWidget(btn)
@@ -194,7 +195,7 @@ class _ChartToolbar(QWidget):
 
     def _tbtn(self, label: str, tip: str, slot) -> QPushButton:
         btn = QPushButton(label)
-        btn.setFixedSize(30, 26)
+        btn.setFixedSize(58, 26)
         btn.setFont(QFont(FONT_UI, 11))
         btn.setToolTip(tip)
         btn.setStyleSheet(
@@ -258,6 +259,9 @@ class HydrographWindow(QWidget):
         self.setWindowTitle(result_element.title or result_element.name)
         self.resize(800, 500)
         self.setMinimumSize(500, 350)
+        # Explicit white background — without this Qt.WindowType.Window defaults to black
+        self.setStyleSheet("HydrographWindow { background: #FFFFFF; } QWidget { background: #FFFFFF; }")
+        self.setAutoFillBackground(True)
 
         self._build_ui()
         self._populate()
@@ -277,6 +281,7 @@ class HydrographWindow(QWidget):
 
         # Legend
         self._legend = _LegendWidget()
+        self._legend.setStyleSheet("background: #FFFFFF;")
         root.addWidget(self._legend)
 
         # PyQtGraph plot
