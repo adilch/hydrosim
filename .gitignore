@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# MyPy
+.mypy_cache/
+
+# HydroSim runtime
+~/.hydrosim/autosave/
+
+# Distribution
+dist/
+*.spec
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Fonts (downloaded at setup, not committed)
+hydrosim/resources/fonts/*.ttf
