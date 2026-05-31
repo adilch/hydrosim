@@ -260,7 +260,8 @@ class PalettePanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(PALETTE_WIDTH)
+        self.setMinimumWidth(140)
+        self.setMaximumWidth(480)
         self.setObjectName("palette_panel")
         self.setStyleSheet(
             f"#palette_panel {{ background: {PANEL_BG}; "

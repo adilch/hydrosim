@@ -316,6 +316,13 @@ class _SimLogDock(QDockWidget):
             Qt.DockWidgetArea.BottomDockWidgetArea
             | Qt.DockWidgetArea.RightDockWidgetArea
         )
+        # Keep all features (move, float, close) so the title bar is shown
+        # and the splitter handle between the canvas and dock is visible
+        self.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
         self._text = QTextEdit()
         self._text.setReadOnly(True)
         self._text.setFont(QFont(FONT_MONO, 11))
@@ -324,7 +331,8 @@ class _SimLogDock(QDockWidget):
             f"border: none; padding: 8px;"
         )
         self.setWidget(self._text)
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(80)
+        self.setMaximumHeight(600)
 
     def append(self, message: str) -> None:
         from datetime import datetime
@@ -408,20 +416,30 @@ class MainWindow(QMainWindow):
         self._stale_banner.setVisible(False)
         root.addWidget(self._stale_banner)
 
-        # Body: palette + canvas
-        body = QWidget()
-        body.setObjectName("body")
-        body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(0)
+        # Body: palette + canvas in a horizontal splitter so the divider is draggable
+        from PyQt6.QtWidgets import QSplitter as _Splitter
+        body_split = _Splitter(Qt.Orientation.Horizontal)
+        body_split.setHandleWidth(4)
+        body_split.setChildrenCollapsible(False)
+        body_split.setStyleSheet(
+            "QSplitter::handle:horizontal {"
+            "  background: #E7E9EE;"
+            "  border-left: 1px solid #D5D9E0;"
+            "}"
+            "QSplitter::handle:horizontal:hover {"
+            "  background: #D0D5DE;"
+            "}"
+        )
 
         self._palette_panel = self._build_palette_placeholder()
-        body_layout.addWidget(self._palette_panel)
+        self._canvas_panel  = self._build_canvas_placeholder()
+        body_split.addWidget(self._palette_panel)
+        body_split.addWidget(self._canvas_panel)
+        body_split.setSizes([200, 9999])       # palette starts at 200px, canvas takes rest
+        body_split.setStretchFactor(0, 0)      # palette: don't stretch
+        body_split.setStretchFactor(1, 1)      # canvas: takes all extra space
 
-        self._canvas_panel = self._build_canvas_placeholder()
-        body_layout.addWidget(self._canvas_panel, stretch=1)
-
-        root.addWidget(body, stretch=1)
+        root.addWidget(body_split, stretch=1)
 
         # Status bar
         self._statusbar = _StatusBar()

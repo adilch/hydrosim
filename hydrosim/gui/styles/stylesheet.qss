@@ -301,8 +301,11 @@ QDockWidget {
 QDockWidget::title {
     background: #F5F6FA;
     padding: 6px 10px;
+    border-top: 2px solid #D0D5DE;      /* visible drag handle at top */
     border-bottom: 1px solid #E7E9EE;
     text-align: left;
+    color: #1A1A2E;
+    font-weight: 600;
 }
 
 /* ── Splitter ────────────────────────────────────────────────────────────── */
