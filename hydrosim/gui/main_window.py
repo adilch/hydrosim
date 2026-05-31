@@ -57,11 +57,13 @@ def _make_logo_pixmap(size: int, colour: str = SEL_BLUE) -> QPixmap:
 class _Toolbar(QWidget):
     """48px toolbar: file buttons | divider | Run | Stop | spacer | meta text."""
 
-    run_clicked  = pyqtSignal()
-    stop_clicked = pyqtSignal()
-    new_clicked  = pyqtSignal()
-    open_clicked = pyqtSignal()
-    save_clicked = pyqtSignal()
+    run_clicked         = pyqtSignal()
+    stop_clicked        = pyqtSignal()
+    new_clicked         = pyqtSignal()
+    open_clicked        = pyqtSignal()
+    save_clicked        = pyqtSignal()
+    zoom_extent_clicked = pyqtSignal()
+    results_clicked     = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -91,6 +93,18 @@ class _Toolbar(QWidget):
         layout.addWidget(self._btn_run)
         layout.addWidget(self._btn_stop)
 
+        layout.addWidget(self._divider())
+
+        # Zoom Extent
+        self._btn_zoom_extent = self._icon_btn("Zoom Extent", "Fit all elements in view  (Ctrl+Shift+F)")
+        layout.addWidget(self._btn_zoom_extent)
+
+        layout.addWidget(self._divider())
+
+        # Results — disabled until simulation has been run successfully
+        self._btn_results = self._results_btn()
+        layout.addWidget(self._btn_results)
+
         # Spacer
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -114,6 +128,8 @@ class _Toolbar(QWidget):
         self._btn_save.clicked.connect(self.save_clicked)
         self._btn_run.clicked.connect(self.run_clicked)
         self._btn_stop.clicked.connect(self.stop_clicked)
+        self._btn_zoom_extent.clicked.connect(self.zoom_extent_clicked)
+        self._btn_results.clicked.connect(self.results_clicked)
 
     def _file_btn(self, label: str, shortcut: str) -> QPushButton:
         btn = QPushButton(label)
@@ -151,6 +167,45 @@ class _Toolbar(QWidget):
             f"QPushButton:disabled {{ color: #C9B6B6; border-color: #ECEEF2; background: #FAFBFC; }}"
         )
         return btn
+
+    def _icon_btn(self, label: str, tooltip: str) -> QPushButton:
+        """Standard toolbar icon button (same style as file buttons)."""
+        btn = QPushButton(label)
+        btn.setFixedHeight(32)
+        btn.setFont(QFont(FONT_UI, 13))
+        btn.setToolTip(tooltip)
+        btn.setStyleSheet(
+            f"QPushButton {{ border: 1px solid #E2E5EB; border-radius: 7px; "
+            f"background: {PANEL_BG}; color: {TEXT_PRIMARY}; "
+            f"font-weight: 500; padding: 0 12px; }}"
+            f"QPushButton:hover {{ background: #F4F6F9; border-color: #D5D9E0; }}"
+            f"QPushButton:disabled {{ color: #C9B6B6; border-color: #ECEEF2; background: #FAFBFC; }}"
+        )
+        return btn
+
+    def _results_btn(self) -> QPushButton:
+        btn = QPushButton("Results")
+        btn.setFixedHeight(32)
+        btn.setEnabled(False)   # disabled until a successful run
+        btn.setFont(QFont(FONT_UI, 13))
+        btn.setToolTip(
+            "Open Results Dashboard\n"
+            "(available after a successful simulation run;\n"
+            " disabled again when the model is edited)"
+        )
+        btn.setStyleSheet(
+            f"QPushButton {{ border: 1px solid #E2E5EB; border-radius: 7px; "
+            f"background: {PANEL_BG}; color: {TEXT_PRIMARY}; "
+            f"font-weight: 600; padding: 0 14px; }}"
+            f"QPushButton:hover {{ background: #EEF4FB; border-color: #2E86C1; color: #2E86C1; }}"
+            f"QPushButton:enabled {{ border-color: #2E86C1; }}"
+            f"QPushButton:disabled {{ color: #C9B6B6; border-color: #ECEEF2; background: #FAFBFC; }}"
+        )
+        return btn
+
+    def set_results_available(self, available: bool) -> None:
+        """Enable or disable the Results button."""
+        self._btn_results.setEnabled(available)
 
     def _divider(self) -> QWidget:
         d = QWidget()
@@ -575,6 +630,8 @@ class MainWindow(QMainWindow):
         self._toolbar.save_clicked.connect(self._on_save)
         self._toolbar.run_clicked.connect(self._on_run)
         self._toolbar.stop_clicked.connect(self._on_stop)
+        self._toolbar.zoom_extent_clicked.connect(self._canvas.zoom_to_fit)
+        self._toolbar.results_clicked.connect(self._on_show_results)
 
         self._act_new.triggered.connect(self._on_new)
         self._act_open.triggered.connect(self._on_open)
@@ -670,6 +727,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard_changes():
             return
         self._clear_canvas()
+        self._toolbar.set_results_available(False)
         self._graph        = ModelGraph()
         self._model_path   = None
         self._results_store = None
@@ -748,6 +806,7 @@ class MainWindow(QMainWindow):
         self._model_path    = path
         self._results_store = None
         self._result_mgr.close_all()
+        self._toolbar.set_results_available(False)
         self._rebuild_canvas_from_graph()
         self._add_recent_file(path)
         self.set_model_name(path.stem, modified=False)
@@ -860,16 +919,18 @@ class MainWindow(QMainWindow):
         self.set_simulation_running(False)
         self.set_simulation_complete(results.completed_steps, results.run_duration_s, results)
         self._show_stale_banner(False)
-        # Auto-open dashboard and populate all result tabs
-        self._open_all_result_tabs(results)
+        # Populate result tabs in the background (don't auto-open the window)
+        self._populate_result_tabs(results)
+        # Enable the Results button now that we have fresh results
+        self._toolbar.set_results_available(True)
         if self._debug_mode:
             self.log(
                 "[DEBUG] Run complete. Check log above for element snapshots "
                 "and water balance."
             )
 
-    def _open_all_result_tabs(self, results_store) -> None:
-        """Open / refresh the Results Dashboard with all TimeHistoryResult elements."""
+    def _populate_result_tabs(self, results_store) -> None:
+        """Populate ResultsDashboard tabs without showing the window."""
         from hydrosim.model.elements.timehistory import TimeHistoryResult
         result_elements = [
             el for el in self._graph.elements.values()
@@ -879,6 +940,16 @@ class MainWindow(QMainWindow):
             return
         for el in result_elements:
             self._result_mgr.show_result(el, results_store, self._graph, parent=self)
+        # Hide the dashboard — user must click Results to see it
+        if self._result_mgr._dashboard:
+            self._result_mgr._dashboard.hide()
+
+    def _on_show_results(self) -> None:
+        """Results toolbar button clicked — show the dashboard."""
+        if self._result_mgr._dashboard:
+            self._result_mgr._dashboard.show()
+            self._result_mgr._dashboard.raise_()
+            self._result_mgr._dashboard.activateWindow()
 
     def _on_sim_stopped(self, results) -> None:
         self._toolbar.set_simulation_state("stopped")
@@ -908,6 +979,7 @@ class MainWindow(QMainWindow):
         self._result_mgr.close_all()
         self._scene.clear_results_markers()
         self._statusbar.set_sim_state("idle")
+        self._toolbar.set_results_available(False)
 
     # ── Stale-results banner ──────────────────────────────────────────────────
 
@@ -1121,9 +1193,10 @@ class MainWindow(QMainWindow):
         name = self._get_model_name()
         star = "*" if modified else ""
         self.setWindowTitle(f"HydroSim — {name}{star}")
-        # Show stale banner only when model was changed after a completed run
         if modified and self._results_store is not None:
+            # Model changed after a run — results are stale
             self._show_stale_banner(True)
+            self._toolbar.set_results_available(False)
 
     def _get_model_name(self) -> str:
         if self._model_path:
