@@ -14,19 +14,31 @@ from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPathItem
 from hydrosim.gui.styles.theme import (
     CAT_COLOURS,
     CONN_CTRL_OFFSET, CONN_STROKE_OPACITY, CONN_STROKE_W,
-    CONN_SELECTED_W, SEL_BLUE, ARROW_SIZE,
+    CONN_SELECTED_W, CONN_ENDPOINT_R, SEL_BLUE, ARROW_SIZE,
 )
 from hydrosim.model.base import Connection
 
 
-def _bezier_path(start: QPointF, end: QPointF, offset: float = CONN_CTRL_OFFSET) -> QPainterPath:
+def _adaptive_offset(start: QPointF, end: QPointF) -> float:
+    """
+    Scale the bezier control-point offset with the horizontal distance so that:
+    - Short connections have a tighter, more compact curve
+    - Long connections have a gentler, more readable S-curve
+    Clamped to [50, 200] px.
+    """
+    dx = abs(end.x() - start.x())
+    return max(50.0, min(dx * 0.45, 200.0))
+
+
+def _bezier_path(start: QPointF, end: QPointF, offset: float | None = None) -> tuple:
     """
     Cubic bezier departing rightward from start, arriving leftward at end.
-    P0 = start
-    P1 = start + (offset, 0)
-    P2 = end   - (offset, 0)
-    P3 = end
+    P0 = start,  P1 = start + (offset, 0),
+    P2 = end - (offset, 0),  P3 = end.
+    offset is adaptive by default.
     """
+    if offset is None:
+        offset = _adaptive_offset(start, end)
     ctrl1 = QPointF(start.x() + offset, start.y())
     ctrl2 = QPointF(end.x()   - offset, end.y())
     path  = QPainterPath()
@@ -70,7 +82,12 @@ class ConnectionItem(QGraphicsPathItem):
         self.from_port_item = from_port_item
         self.to_port_item   = to_port_item
         self._category      = category
-        self._ctrl2         = QPointF()
+
+        # Cached geometry — updated by update_path(), read by paint()
+        # so paint() never calls mapToScene() independently (avoids drag glitch)
+        self._start = QPointF()
+        self._end   = QPointF()
+        self._ctrl2 = QPointF()
 
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setAcceptHoverEvents(True)
@@ -85,10 +102,15 @@ class ConnectionItem(QGraphicsPathItem):
     # ── Geometry ──────────────────────────────────────────────────────────────
 
     def update_path(self) -> None:
-        """Recalculate bezier from current port positions. Called when elements move."""
-        start = self.from_port_item.scene_centre()
-        end   = self.to_port_item.scene_centre()
-        path, self._ctrl2 = _bezier_path(start, end)
+        """
+        Recalculate bezier from current port outer-edge positions.
+        Uses scene_connection_point() so the wire visually starts/ends
+        at the outer edge of the port dot, not its hidden centre.
+        Called whenever either connected element moves.
+        """
+        self._start = self.from_port_item.scene_connection_point()
+        self._end   = self.to_port_item.scene_connection_point()
+        path, self._ctrl2 = _bezier_path(self._start, self._end)
         self.setPath(path)
         self.update()
 
@@ -110,24 +132,28 @@ class ConnectionItem(QGraphicsPathItem):
     def paint(self, painter: QPainter, option, widget=None) -> None:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Draw bezier
-        selected = self.isSelected()
-        self._update_style(selected)
-        painter.setPen(self.pen())
+        selected  = self.isSelected()
+        base_col  = QColor(SEL_BLUE) if selected \
+                    else QColor(CAT_COLOURS.get(self._category, "#888888"))
+        wire_col  = QColor(base_col)
+        if not selected:
+            wire_col.setAlphaF(CONN_STROKE_OPACITY)
+        width = CONN_SELECTED_W if selected else CONN_STROKE_W
+
+        # ── Wire ────────────────────────────────────────────────────────
+        painter.setPen(QPen(wire_col, width, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(self.path())
 
-        # Draw arrowhead (filled, same colour but full opacity)
-        arrow_col = QColor(CAT_COLOURS.get(self._category, "#888888"))
-        if selected:
-            arrow_col = QColor(SEL_BLUE)
-        painter.setBrush(QBrush(arrow_col))
+        # ── Filled circle at source end ──────────────────────────────────
+        # Marks exactly where the wire leaves the output port dot.
         painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(base_col))
+        painter.drawEllipse(self._start, CONN_ENDPOINT_R, CONN_ENDPOINT_R)
 
-        start = self.from_port_item.scene_centre()
-        end   = self.to_port_item.scene_centre()
-        _, ctrl2 = _bezier_path(start, end)
-        arrow = _arrowhead(end, ctrl2)
+        # ── Arrowhead at destination ─────────────────────────────────────
+        arrow = _arrowhead(self._end, self._ctrl2)
         painter.drawPolygon(arrow)
 
     # ── Hover ─────────────────────────────────────────────────────────────────
@@ -163,8 +189,10 @@ class TempConnectionItem(QGraphicsPathItem):
         self.setZValue(100)   # above everything
 
         col = QColor(CAT_COLOURS.get(category, "#888888"))
+        col.setAlphaF(0.7)
         pen = QPen(col, CONN_STROKE_W)
         pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         self.setPen(pen)
 
     def update_end(self, end: QPointF) -> None:

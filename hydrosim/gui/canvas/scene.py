@@ -174,7 +174,7 @@ class HydroScene(QGraphicsScene):
 
         self._dragging     = True
         self._drag_from_port = from_port_item
-        start = from_port_item.scene_centre()
+        start = from_port_item.scene_connection_point()
         category = from_port_item.category
 
         self._temp_line = TempConnectionItem(start, category)

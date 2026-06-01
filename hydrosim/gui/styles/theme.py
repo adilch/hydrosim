@@ -111,11 +111,12 @@ PORT_ROW_HEIGHT  = 20
 PORT_OFFSET_X    = 6
 
 # ── Connections ────────────────────────────────────────────────────────────────
-CONN_STROKE_W      = 2.0
-CONN_STROKE_OPACITY = 0.8
-CONN_SELECTED_W    = 3.0
-CONN_CTRL_OFFSET   = 80
-ARROW_SIZE         = 7
+CONN_STROKE_W      = 2.2
+CONN_STROKE_OPACITY = 0.92
+CONN_SELECTED_W    = 3.2
+CONN_CTRL_OFFSET   = 80    # base value; actual offset is adaptive (see connection_item.py)
+ARROW_SIZE         = 10
+CONN_ENDPOINT_R    = 3.5   # radius of the small filled circle drawn at the source end
 
 # ── Canvas limits ──────────────────────────────────────────────────────────────
 CANVAS_LOGICAL_W = 4000

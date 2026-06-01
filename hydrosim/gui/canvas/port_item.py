@@ -112,3 +112,19 @@ class PortItem(QGraphicsEllipseItem):
     def scene_centre(self) -> QPointF:
         """Scene-coordinate centre of this port dot."""
         return self.mapToScene(QPointF(0, 0))
+
+    def scene_connection_point(self) -> QPointF:
+        """
+        Outer edge of this port dot — the point where a connection wire
+        should start or end so it visually touches the dot without being
+        hidden under the element card.
+
+        Output port (right edge of card): 5px to the right of dot centre.
+        Input port  (left edge of card):  5px to the left  of dot centre.
+        """
+        from hydrosim.gui.styles.theme import PORT_DIAMETER
+        r = PORT_DIAMETER / 2
+        if self.port.port_type == PortType.OUTPUT:
+            return self.mapToScene(QPointF(r, 0))
+        else:
+            return self.mapToScene(QPointF(-r, 0))
