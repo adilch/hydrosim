@@ -95,7 +95,7 @@ PALETTE_WIDTH    = 200
 STATUSBAR_HEIGHT = 28
 
 # ── Element cards ──────────────────────────────────────────────────────────────
-CARD_WIDTH         = 180
+CARD_WIDTH         = 200
 CARD_CORNER_R      = 10
 CARD_TOP_BAR_H     = 4
 CARD_PADDING_H     = 12

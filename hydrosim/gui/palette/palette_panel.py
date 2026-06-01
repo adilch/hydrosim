@@ -93,8 +93,8 @@ class _PaletteItem(QWidget):
         self._cat_colour  = QColor(CAT_COLOURS.get(category, "#888888"))
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(9, 8, 9, 8)
-        layout.setSpacing(9)
+        layout.setContentsMargins(10, 9, 10, 9)
+        layout.setSpacing(10)
 
         # Icon
         icon_lbl = QLabel()
@@ -117,7 +117,8 @@ class _PaletteItem(QWidget):
         desc_lbl = QLabel(description)
         desc_lbl.setFont(QFont(FONT_UI, 10))
         desc_lbl.setStyleSheet(f"color: {TEXT_SECONDARY};")
-        desc_lbl.setWordWrap(False)
+        desc_lbl.setWordWrap(True)          # allow wrapping so nothing is cut off
+        desc_lbl.setMinimumHeight(14)
         text_col.addWidget(desc_lbl)
 
         layout.addLayout(text_col)

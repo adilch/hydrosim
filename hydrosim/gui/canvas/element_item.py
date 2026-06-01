@@ -47,6 +47,26 @@ _CAT_STR: dict[ElementCategory, str] = {
 }
 
 
+def _fmt_value(v: float) -> str:
+    """Format a float with SI suffix for compact display on element cards."""
+    import math
+    if v == 0:
+        return "0"
+    av = abs(v)
+    for suffix, threshold in [("G", 1e9), ("M", 1e6), ("k", 1e3)]:
+        if av >= threshold:
+            display = v / threshold
+            if abs(display - round(display)) < 0.005:
+                return f"{int(round(display))}{suffix}"
+            return f"{display:.2g}{suffix}"
+    # Small numbers
+    if av < 0.001:
+        return f"{v:.2e}"
+    if av < 1:
+        return f"{v:.4g}"
+    return f"{v:.4g}"
+
+
 def _load_svg_icon(kind: str, size: int, colour: QColor) -> "QPixmap | None":
     """Render one of the 5 SVG icons at the given size and colour."""
     from PyQt6.QtSvg import QSvgRenderer
@@ -236,25 +256,25 @@ class ElementItem(QGraphicsItem):
         text_x = icon_x + icon_size + 9
         text_w = CARD_WIDTH - text_x - CARD_PADDING_H
 
-        # Element name
-        name_font = QFont(FONT_UI, 13)
+        # Element name — 2 lines if long
+        name_font = QFont(FONT_UI, 12)
         name_font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(name_font)
         painter.setPen(QColor(TEXT_PRIMARY))
-        name_y = top + 18
+        name_y = top + 16
         painter.drawText(
             QRectF(text_x, name_y, text_w, 18),
             Qt.TextFlag.TextSingleLine,
             self.element.name,
         )
 
-        # Element ID (small monospace)
-        id_font = QFont(FONT_MONO, 9)
+        # Element ID — 6 chars, very faint (acts as a debug handle only)
+        id_font = QFont(FONT_MONO, 8)
         painter.setFont(id_font)
-        painter.setPen(QColor(TEXT_SECONDARY))
-        short_id = self.element.id[:8]
+        painter.setPen(QColor("#C5C9D1"))   # near-invisible, not distracting
+        short_id = self.element.id[:6]
         painter.drawText(
-            QRectF(text_x, name_y + 18, text_w, 14),
+            QRectF(text_x, name_y + 17, text_w, 13),
             Qt.TextFlag.TextSingleLine,
             short_id,
         )
@@ -267,8 +287,8 @@ class ElementItem(QGraphicsItem):
     def _paint_body(self, painter: QPainter, card_rect: QRectF) -> None:
         body_top = CARD_TOP_BAR_H + _HEAD_H + _DIVIDER_H
 
-        # Port labels
-        lbl_font = QFont(FONT_UI, 10)
+        # Port labels — small, truncated, readable
+        lbl_font = QFont(FONT_UI, 9)
         painter.setFont(lbl_font)
         painter.setPen(QColor(TEXT_SECONDARY))
 
@@ -304,7 +324,8 @@ class ElementItem(QGraphicsItem):
         val_font.setWeight(QFont.Weight.Medium)
         painter.setFont(val_font)
         painter.setPen(QColor(TEXT_PRIMARY))
-        val_str = str(self.element.value) if hasattr(self.element, "value") else ""
+        raw = self.element.value if hasattr(self.element, "value") else 0.0
+        val_str = _fmt_value(raw)
         y = body_top + PORT_ROW_HEIGHT + 4
         painter.drawText(
             QRectF(CARD_PADDING_H, y, CARD_WIDTH - CARD_PADDING_H * 2, 18),

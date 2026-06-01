@@ -294,8 +294,9 @@ class _StatusBar(QWidget):
         self._pill = QLabel("Ready")
         self._pill.setFont(QFont(FONT_UI, 11))
         self._pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pill.setMinimumWidth(160)
         self._pill.setStyleSheet(
-            "padding: 2px 11px; border-radius: 10px; font-weight: 600; "
+            "padding: 2px 14px; border-radius: 10px; font-weight: 600; "
             f"background: #F0F1F5; color: {TEXT_SECONDARY};"
         )
         outer.addWidget(self._pill)
@@ -325,7 +326,7 @@ class _StatusBar(QWidget):
 
     def _zoom_btn(self, label: str) -> QPushButton:
         btn = QPushButton(label)
-        btn.setFixedSize(18, 18)
+        btn.setFixedSize(22, 22)
         btn.setFont(QFont(FONT_UI, 11))
         btn.setStyleSheet(
             f"QPushButton {{ border: none; background: transparent; "

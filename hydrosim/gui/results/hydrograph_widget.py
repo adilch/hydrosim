@@ -50,17 +50,18 @@ mpl.rcParams.update({
     "figure.facecolor":    "white",
     "axes.edgecolor":      "#AAAAAA",
     "axes.labelcolor":     "#1A1A2E",
-    "axes.labelsize":      10,
+    "axes.labelsize":      11,
     "axes.labelweight":    "bold",
-    "axes.titlesize":      11,
+    "axes.titlesize":      12,
     "axes.titleweight":    "bold",
+    "axes.titlelocation":  "left",
     "axes.grid":           True,
     "grid.color":          "#EEEEEE",
     "grid.linewidth":      0.8,
     "xtick.color":         "#1A1A2E",
     "ytick.color":         "#1A1A2E",
-    "xtick.labelsize":     9,
-    "ytick.labelsize":     9,
+    "xtick.labelsize":     10,
+    "ytick.labelsize":     10,
     "lines.linewidth":     1.5,
     "lines.antialiased":   True,
     "font.family":         "sans-serif",
@@ -110,50 +111,54 @@ class _SeriesRow(QWidget):
     def __init__(self, config: SeriesConfig, parent=None):
         super().__init__(parent)
         self.config = config
+        self.setFixedHeight(38)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(6, 3, 6, 3)
-        lay.setSpacing(6)
+        lay.setContentsMargins(10, 0, 8, 0)
+        lay.setSpacing(7)
+
+        # Colour swatch (left, prominent)
+        self._colour_btn = QPushButton()
+        self._colour_btn.setFixedSize(16, 16)
+        self._colour_btn.setStyleSheet(
+            f"background: {config.colour}; border: none; border-radius: 3px;"
+        )
+        self._colour_btn.setToolTip("Click to change colour")
+        self._colour_btn.clicked.connect(self._pick_colour)
+        lay.addWidget(self._colour_btn)
 
         # Visibility checkbox
         self._cb = QCheckBox()
         self._cb.setChecked(config.visible)
-        self._cb.setFixedWidth(18)
+        self._cb.setFixedWidth(16)
         self._cb.toggled.connect(self._on_toggle)
         lay.addWidget(self._cb)
 
-        # Series label (truncated)
-        lbl = QLabel(config.label)
-        lbl.setFont(QFont(FONT_MONO, 9))
+        # Series label — elided with tooltip for long names
+        short = config.label if len(config.label) <= 22 else config.label[:20] + "…"
+        lbl = QLabel(short)
+        lbl.setFont(QFont(FONT_MONO, 10))
         lbl.setStyleSheet(f"color: {TEXT_PRIMARY};")
         lbl.setToolTip(config.label)
         lay.addWidget(lbl, stretch=1)
 
-        # Axis assignment dropdown
+        # Axis assignment: compact "L" / "R" with tooltip
         self._axis_combo = QComboBox()
-        self._axis_combo.addItems(["Left", "Right"])
-        self._axis_combo.setCurrentText("Left" if config.axis == "left" else "Right")
-        self._axis_combo.setFixedWidth(60)
-        self._axis_combo.setFont(QFont(FONT_UI, 9))
-        self._axis_combo.currentTextChanged.connect(self._on_axis_change)
+        self._axis_combo.addItem("L", "left")
+        self._axis_combo.addItem("R", "right")
+        self._axis_combo.setCurrentIndex(0 if config.axis == "left" else 1)
+        self._axis_combo.setFixedSize(40, 24)
+        self._axis_combo.setFont(QFont(FONT_UI, 10))
+        self._axis_combo.setToolTip("Left axis / Right axis")
+        self._axis_combo.currentIndexChanged.connect(self._on_axis_change)
         lay.addWidget(self._axis_combo)
-
-        # Colour swatch button
-        self._colour_btn = QPushButton()
-        self._colour_btn.setFixedSize(20, 20)
-        self._colour_btn.setStyleSheet(
-            f"background: {config.colour}; border: 1px solid #CCCCCC; border-radius: 3px;"
-        )
-        self._colour_btn.setToolTip("Change colour")
-        self._colour_btn.clicked.connect(self._pick_colour)
-        lay.addWidget(self._colour_btn)
 
     def _on_toggle(self, checked: bool) -> None:
         self.config.visible = checked
         self.changed.emit()
 
-    def _on_axis_change(self, text: str) -> None:
-        self.config.axis = "left" if text == "Left" else "right"
+    def _on_axis_change(self, index: int) -> None:
+        self.config.axis = "left" if index == 0 else "right"
         self.changed.emit()
 
     def _pick_colour(self) -> None:
@@ -176,7 +181,7 @@ class SeriesManagerPanel(QWidget):
 
     def __init__(self, configs: list[SeriesConfig], parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(160)
+        self.setMinimumWidth(180)
         self.setMaximumWidth(500)
         self.setStyleSheet(
             f"background: {PANEL_BG}; border-right: 1px solid {BORDER_SUBTLE};"
@@ -186,25 +191,38 @@ class SeriesManagerPanel(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Header
-        hdr = QLabel("  Series")
-        hdr.setFixedHeight(28)
-        hdr.setFont(QFont(FONT_UI, 10))
+        # Header with series count badge
+        hdr = QWidget()
+        hdr.setFixedHeight(36)
         hdr.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-weight: 600; "
             f"background: #F5F6FA; border-bottom: 1px solid {BORDER_SUBTLE};"
         )
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(12, 0, 10, 0)
+        hdr_lbl = QLabel("Series")
+        hdr_lbl.setFont(QFont(FONT_UI, 11))
+        hdr_lbl.setStyleSheet(f"color: {TEXT_PRIMARY}; font-weight: 700; background: transparent;")
+        hdr_lay.addWidget(hdr_lbl)
+        hdr_lay.addStretch()
+        badge = QLabel(str(len(configs)))
+        badge.setFont(QFont(FONT_MONO, 9))
+        badge.setStyleSheet(
+            f"background: #E4EDF5; color: #2E86C1; border-radius: 8px; "
+            f"padding: 1px 7px; font-weight: 600;"
+        )
+        hdr_lay.addWidget(badge)
         root.addWidget(hdr)
 
-        # Sub-header
+        # Column labels
         sub = QWidget()
+        sub.setFixedHeight(22)
         sub_lay = QHBoxLayout(sub)
-        sub_lay.setContentsMargins(6, 2, 6, 2)
-        sub_lay.setSpacing(0)
-        for text, width in [("", 24), ("Name", 0), ("Axis", 60), ("", 26)]:
+        sub_lay.setContentsMargins(10, 0, 8, 0)
+        sub_lay.setSpacing(7)
+        for text, width in [("", 16), ("", 16), ("Name", 0), ("Axis", 40)]:
             l = QLabel(text)
-            l.setFont(QFont(FONT_UI, 8))
-            l.setStyleSheet(f"color: {TEXT_SECONDARY};")
+            l.setFont(QFont(FONT_UI, 9))
+            l.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
             if width:
                 l.setFixedWidth(width)
             else:
@@ -318,15 +336,18 @@ class PlotCanvas(QWidget):
         y_units = result_element.y_axis_units or ""
         if y_units and y_units != "-":
             y_label = f"{y_label} ({y_units})" if y_label else y_units
-        self.ax1.set_ylabel(y_label or "Value")
+        # Truncate very long axis labels so they don't crowd the axes
+        y_label = (y_label[:32] + "…") if len(y_label or "") > 32 else (y_label or "Value")
+        self.ax1.set_ylabel(y_label)
         self.ax1.set_xlabel("Time (days)")
 
         if has_right:
-            self.ax2.set_ylabel("Secondary axis")
+            self.ax2.set_ylabel("Right axis")
 
-        # Title
+        # Title — left-aligned, slightly above the axes
         title = result_element.title or result_element.name
-        self.ax1.set_title(title)
+        title = (title[:50] + "…") if len(title) > 50 else title
+        self.ax1.set_title(title, pad=10)
 
         # Manual Y-range
         if result_element.y_min is not None:
@@ -343,7 +364,7 @@ class PlotCanvas(QWidget):
         if lines_for_legend and legend_loc != "none":
             if legend_loc == "outside right":
                 # Place legend to the right of the plot area
-                self.fig.subplots_adjust(left=0.09, right=0.78, top=0.93, bottom=0.10)
+                self.fig.subplots_adjust(left=0.10, right=0.76, top=0.91, bottom=0.11)
                 self.ax1.legend(
                     handles=lines_for_legend,
                     loc="upper left",
@@ -353,7 +374,7 @@ class PlotCanvas(QWidget):
                     edgecolor="#DDDDDD",
                 )
             else:
-                self.fig.subplots_adjust(left=0.09, right=0.91, top=0.93, bottom=0.10)
+                self.fig.subplots_adjust(left=0.10, right=0.93, top=0.91, bottom=0.11)
                 self.ax1.legend(
                     handles=lines_for_legend,
                     loc=legend_loc,
@@ -468,39 +489,61 @@ class DataTableWidget(QWidget):
 
         # Header bar
         hdr = QWidget()
-        hdr.setFixedHeight(30)
+        hdr.setFixedHeight(34)
         hdr.setStyleSheet(
             f"background: #F5F6FA; border-bottom: 1px solid {BORDER_SUBTLE};"
         )
         hdr_lay = QHBoxLayout(hdr)
-        hdr_lay.setContentsMargins(10, 0, 10, 0)
+        hdr_lay.setContentsMargins(12, 0, 10, 0)
+        hdr_lay.setSpacing(8)
+
+        icon_lbl = QLabel("≡")
+        icon_lbl.setFont(QFont(FONT_UI, 13))
+        icon_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
+        hdr_lay.addWidget(icon_lbl)
+
         title_lbl = QLabel("Data Table")
-        title_lbl.setFont(QFont(FONT_UI, 9))
+        title_lbl.setFont(QFont(FONT_UI, 11))
         title_lbl.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-weight: 600; background: transparent;"
+            f"color: {TEXT_PRIMARY}; font-weight: 700; background: transparent;"
         )
         hdr_lay.addWidget(title_lbl)
         hdr_lay.addStretch()
+
         self._row_count_lbl = QLabel()
-        self._row_count_lbl.setFont(QFont(FONT_MONO, 9))
+        self._row_count_lbl.setFont(QFont(FONT_MONO, 10))
         self._row_count_lbl.setStyleSheet(
             f"color: {TEXT_SECONDARY}; background: transparent;"
         )
         hdr_lay.addWidget(self._row_count_lbl)
+
+        # Copy to clipboard button
+        copy_btn = QPushButton("Copy")
+        copy_btn.setFixedSize(52, 24)
+        copy_btn.setFont(QFont(FONT_UI, 10))
+        copy_btn.setToolTip("Copy visible data to clipboard")
+        copy_btn.setStyleSheet(
+            f"QPushButton {{ border: 1px solid {BORDER_SUBTLE}; border-radius: 5px; "
+            f"background: {PANEL_BG}; color: {TEXT_PRIMARY}; }}"
+            f"QPushButton:hover {{ background: #EEF0F4; }}"
+        )
+        copy_btn.clicked.connect(self._copy_to_clipboard)
+        hdr_lay.addWidget(copy_btn)
         root.addWidget(hdr)
 
         # QTableView (virtual — no items created upfront)
         self._view = QTableView()
         self._view.setAlternatingRowColors(True)
-        self._view.setFont(QFont(FONT_MONO, 9))
+        self._view.setFont(QFont(FONT_MONO, 10))
         self._view.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self._view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._view.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self._view.verticalHeader().setDefaultSectionSize(22)
+        self._view.verticalHeader().setDefaultSectionSize(26)
         self._view.verticalHeader().setVisible(False)
         self._view.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.ResizeToContents
+            QHeaderView.ResizeMode.Interactive
         )
+        self._view.horizontalHeader().setMinimumSectionSize(80)
         self._view.horizontalHeader().setStretchLastSection(True)
         self._view.setStyleSheet(
             f"QTableView {{ border: none; background: white; color: {TEXT_PRIMARY}; "
@@ -557,10 +600,31 @@ class DataTableWidget(QWidget):
         n_vis = len(indices)
         if x_lo is not None or x_hi is not None:
             self._row_count_lbl.setText(
-                f"{n_vis} rows  ({x_lo:.1f} – {x_hi:.1f} days)"
+                f"Day {x_lo:.0f} – {x_hi:.0f}  ({n_vis:,} rows)"
             )
         else:
-            self._row_count_lbl.setText(f"{n_vis} rows (full range)")
+            self._row_count_lbl.setText(f"{n_vis:,} rows")
+
+    def _copy_to_clipboard(self) -> None:
+        """Copy visible table data as tab-separated text to the clipboard."""
+        if self._model is None:
+            return
+        from PyQt6.QtWidgets import QApplication
+        lines = []
+        # Header
+        headers = [
+            self._model.headerData(c, Qt.Orientation.Horizontal)
+            for c in range(self._model.columnCount())
+        ]
+        lines.append("\t".join(str(h or "") for h in headers))
+        # Rows
+        for r in range(self._model.rowCount()):
+            row_vals = [
+                str(self._model.data(self._model.index(r, c)) or "")
+                for c in range(self._model.columnCount())
+            ]
+            lines.append("\t".join(row_vals))
+        QApplication.clipboard().setText("\n".join(lines))
 
 
 # ── ResultTab ─────────────────────────────────────────────────────────────────
@@ -617,57 +681,52 @@ class ResultTab(QWidget):
         self._h_splitter.setStretchFactor(0, 0)
         self._h_splitter.setStretchFactor(1, 1)
 
-        # ── Toggle bar ─────────────────────────────────────────────────
-        toggle_bar = QWidget()
-        toggle_bar.setFixedHeight(34)
-        toggle_bar.setStyleSheet(
+        # ── Row 1: View toggle (left) + Legend position (right) ────────
+        bar1 = QWidget()
+        bar1.setFixedHeight(40)
+        bar1.setStyleSheet(
             f"background: #F5F6FA; border-bottom: 1px solid {BORDER_SUBTLE};"
         )
-        tb_lay = QHBoxLayout(toggle_bar)
-        tb_lay.setContentsMargins(10, 0, 10, 0)
-        tb_lay.setSpacing(4)
+        b1_lay = QHBoxLayout(bar1)
+        b1_lay.setContentsMargins(12, 0, 12, 0)
+        b1_lay.setSpacing(6)
 
-        btn_style_active = (
-            f"QPushButton {{ background: #2E86C1; color: white; border: none; "
-            f"border-radius: 5px; padding: 3px 14px; font-weight: 600; font-size: 11px; }}"
+        self._btn_style_active = (
+            "QPushButton { background: #2E86C1; color: white; border: none; "
+            "border-radius: 6px; padding: 0 16px; font-weight: 600; font-size: 12px; }"
         )
-        btn_style_inactive = (
+        self._btn_style_inactive = (
             f"QPushButton {{ background: transparent; color: {TEXT_SECONDARY}; "
-            f"border: 1px solid {BORDER_SUBTLE}; border-radius: 5px; "
-            f"padding: 3px 14px; font-size: 11px; }}"
+            f"border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; "
+            f"padding: 0 16px; font-size: 12px; }}"
             f"QPushButton:hover {{ background: #EEF0F4; color: {TEXT_PRIMARY}; }}"
         )
 
         self._btn_chart = QPushButton("Chart")
         self._btn_table = QPushButton("Data Table")
         for b in (self._btn_chart, self._btn_table):
-            b.setFixedHeight(24)
-            b.setFont(QFont(FONT_UI, 11))
-        self._btn_chart.setStyleSheet(btn_style_active)
-        self._btn_table.setStyleSheet(btn_style_inactive)
+            b.setFixedHeight(28)
+            b.setFont(QFont(FONT_UI, 12))
+        self._btn_chart.setStyleSheet(self._btn_style_active)
+        self._btn_table.setStyleSheet(self._btn_style_inactive)
         self._btn_chart.clicked.connect(lambda: self._switch_view(0))
         self._btn_table.clicked.connect(lambda: self._switch_view(1))
 
-        tb_lay.addWidget(self._btn_chart)
-        tb_lay.addWidget(self._btn_table)
-        tb_lay.addStretch()
+        b1_lay.addWidget(self._btn_chart)
+        b1_lay.addWidget(self._btn_table)
+        b1_lay.addStretch()
 
-        # Legend position dropdown
-        _leg_lbl = QLabel("Legend:")
-        _leg_lbl.setFont(QFont(FONT_UI, 10))
-        _leg_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
-        tb_lay.addWidget(_leg_lbl)
+        # Legend position — right side of row 1
+        leg_lbl = QLabel("Legend:")
+        leg_lbl.setFont(QFont(FONT_UI, 11))
+        leg_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
+        b1_lay.addWidget(leg_lbl)
 
         self._legend_combo = QComboBox()
-        self._legend_combo.setFont(QFont(FONT_UI, 10))
-        self._legend_combo.setFixedHeight(24)
-        self._legend_combo.setFixedWidth(130)
-        self._legend_combo.setStyleSheet(
-            f"QComboBox {{ border: 1px solid {BORDER_SUBTLE}; border-radius: 5px; "
-            f"background: {PANEL_BG}; color: {TEXT_PRIMARY}; padding: 0 6px; }}"
-        )
-        # (display label, matplotlib loc string)
-        _legend_opts = [
+        self._legend_combo.setFont(QFont(FONT_UI, 11))
+        self._legend_combo.setFixedHeight(28)
+        self._legend_combo.setFixedWidth(140)
+        for display, loc in [
             ("Best (auto)",   "best"),
             ("Upper right",   "upper right"),
             ("Upper left",    "upper left"),
@@ -676,29 +735,34 @@ class ResultTab(QWidget):
             ("Upper centre",  "upper center"),
             ("Lower centre",  "lower center"),
             ("Centre right",  "center right"),
-            ("Outside right", "outside right"),   # handled manually
+            ("Outside right", "outside right"),
             ("Hidden",        "none"),
-        ]
-        for display, loc in _legend_opts:
+        ]:
             self._legend_combo.addItem(display, loc)
-        self._legend_combo.setCurrentIndex(0)   # "Best" by default
+        self._legend_combo.setCurrentIndex(0)
         self._legend_combo.currentIndexChanged.connect(self._on_legend_changed)
-        tb_lay.addWidget(self._legend_combo)
+        b1_lay.addWidget(self._legend_combo)
 
-        right_col.addWidget(toggle_bar)
+        right_col.addWidget(bar1)
 
-        # ── Range bar ──────────────────────────────────────────────────
+        # ── Row 2: Axis range controls ──────────────────────────────────
         from PyQt6.QtWidgets import QDoubleSpinBox as _DSB
-        range_bar = QWidget()
-        range_bar.setFixedHeight(34)
-        range_bar.setStyleSheet(
+        bar2 = QWidget()
+        bar2.setFixedHeight(44)
+        bar2.setStyleSheet(
             f"background: {PANEL_BG}; border-bottom: 1px solid {BORDER_SUBTLE};"
         )
-        rb_lay = QHBoxLayout(range_bar)
-        rb_lay.setContentsMargins(10, 0, 10, 0)
-        rb_lay.setSpacing(6)
+        b2_lay = QHBoxLayout(bar2)
+        b2_lay.setContentsMargins(12, 0, 12, 0)
+        b2_lay.setSpacing(6)
 
-        def _lbl(text):
+        def _axis_lbl(text):
+            l = QLabel(text)
+            l.setFont(QFont(FONT_UI, 11))
+            l.setStyleSheet(f"color: {TEXT_PRIMARY}; font-weight: 600; background: transparent;")
+            return l
+
+        def _range_lbl(text):
             l = QLabel(text)
             l.setFont(QFont(FONT_UI, 10))
             l.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
@@ -709,58 +773,65 @@ class ResultTab(QWidget):
             s.setRange(lo, hi)
             s.setDecimals(dec)
             s.setValue(val)
-            s.setFixedWidth(80)
-            s.setFont(QFont(FONT_MONO, 10))
+            s.setFixedSize(88, 28)
+            s.setFont(QFont(FONT_MONO, 11))
             s.setSpecialValueText("Auto")
             return s
 
-        # Compute data range once for spin limits
+        # Compute data range
         _t0 = float(self._results_store.get_completed_timesteps()[0])
         _t1 = float(self._results_store.get_completed_timesteps()[-1])
 
-        rb_lay.addWidget(_lbl("X:"))
+        b2_lay.addWidget(_axis_lbl("X Axis:"))
         self._x_lo = _spin(_t0 - 1, _t1 + 1, _t0)
         self._x_hi = _spin(_t0 - 1, _t1 + 1, _t1)
-        rb_lay.addWidget(self._x_lo)
-        rb_lay.addWidget(_lbl("–"))
-        rb_lay.addWidget(self._x_hi)
+        b2_lay.addWidget(self._x_lo)
+        b2_lay.addWidget(_range_lbl("to"))
+        b2_lay.addWidget(self._x_hi)
 
-        rb_lay.addSpacing(16)
-        rb_lay.addWidget(_lbl("Y:"))
-        self._y_lo = _spin(-1e9, 1e9, _DSB().minimum(), dec=2)
-        self._y_lo.setRange(-1e9, 1e9); self._y_lo.setValue(self._y_lo.minimum())
-        self._y_lo.setSpecialValueText("Auto")
-        self._y_hi = _spin(-1e9, 1e9, _DSB().maximum(), dec=2)
-        self._y_hi.setRange(-1e9, 1e9); self._y_hi.setValue(self._y_hi.maximum())
-        self._y_hi.setSpecialValueText("Auto")
-        rb_lay.addWidget(self._y_lo)
-        rb_lay.addWidget(_lbl("–"))
-        rb_lay.addWidget(self._y_hi)
+        # Vertical separator
+        sep = QWidget(); sep.setFixedSize(1, 24)
+        sep.setStyleSheet("background: #D5D9E0;")
+        b2_lay.addSpacing(6)
+        b2_lay.addWidget(sep)
+        b2_lay.addSpacing(6)
 
-        rb_lay.addSpacing(10)
+        b2_lay.addWidget(_axis_lbl("Y Axis:"))
+        self._y_lo = _DSB(); self._y_lo.setRange(-1e9, 1e9)
+        self._y_lo.setValue(self._y_lo.minimum()); self._y_lo.setSpecialValueText("Auto")
+        self._y_lo.setFixedSize(88, 28); self._y_lo.setFont(QFont(FONT_MONO, 11))
+        self._y_hi = _DSB(); self._y_hi.setRange(-1e9, 1e9)
+        self._y_hi.setValue(self._y_hi.maximum()); self._y_hi.setSpecialValueText("Auto")
+        self._y_hi.setFixedSize(88, 28); self._y_hi.setFont(QFont(FONT_MONO, 11))
+        b2_lay.addWidget(self._y_lo)
+        b2_lay.addWidget(_range_lbl("to"))
+        b2_lay.addWidget(self._y_hi)
+
+        b2_lay.addStretch()
+
         apply_btn = QPushButton("Apply")
-        apply_btn.setFixedSize(56, 24)
-        apply_btn.setFont(QFont(FONT_UI, 10))
+        apply_btn.setFixedSize(64, 28)
+        apply_btn.setFont(QFont(FONT_UI, 11))
         apply_btn.setStyleSheet(
-            f"QPushButton {{ background: #2E86C1; color: white; border: none; "
-            f"border-radius: 4px; font-weight: 600; }}"
-            f"QPushButton:hover {{ background: #2877ad; }}"
+            "QPushButton { background: #2E86C1; color: white; border: none; "
+            "border-radius: 6px; font-weight: 600; }"
+            "QPushButton:hover { background: #2877ad; }"
         )
         apply_btn.clicked.connect(self._apply_range)
 
         reset_btn = QPushButton("Reset")
-        reset_btn.setFixedSize(50, 24)
-        reset_btn.setFont(QFont(FONT_UI, 10))
+        reset_btn.setFixedSize(60, 28)
+        reset_btn.setFont(QFont(FONT_UI, 11))
         reset_btn.setStyleSheet(
             f"QPushButton {{ background: transparent; color: {TEXT_SECONDARY}; "
-            f"border: 1px solid {BORDER_SUBTLE}; border-radius: 4px; }}"
+            f"border: 1px solid {BORDER_SUBTLE}; border-radius: 6px; }}"
             f"QPushButton:hover {{ background: #EEF0F4; color: {TEXT_PRIMARY}; }}"
         )
         reset_btn.clicked.connect(self._reset_range)
 
-        rb_lay.addWidget(apply_btn)
-        rb_lay.addWidget(reset_btn)
-        right_col.addWidget(range_bar)
+        b2_lay.addWidget(apply_btn)
+        b2_lay.addWidget(reset_btn)
+        right_col.addWidget(bar2)
 
         # Store refs for reset
         self._t0 = _t0
@@ -925,8 +996,8 @@ class ResultsDashboard(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("HydroSim — Results")
-        self.resize(1000, 620)
-        self.setMinimumSize(700, 480)
+        self.resize(1140, 700)
+        self.setMinimumSize(760, 520)
         self.setStyleSheet(f"QMainWindow {{ background: {PANEL_BG}; }}")
 
         self._tabs:  dict[str, ResultTab] = {}  # element_id → ResultTab
@@ -935,9 +1006,17 @@ class ResultsDashboard(QMainWindow):
         # Tab widget
         self._tab_widget = QTabWidget()
         self._tab_widget.setTabsClosable(False)
+        self._tab_widget.setDocumentMode(True)
         self._tab_widget.setStyleSheet(
-            f"QTabBar::tab {{ padding: 6px 16px; font-family: {FONT_UI}; font-size: 12px; }}"
-            f"QTabBar::tab:selected {{ font-weight: 600; }}"
+            f"QTabWidget::pane {{ border: none; background: {PANEL_BG}; }}"
+            f"QTabBar {{ background: #F5F6FA; border-bottom: 2px solid {BORDER_SUBTLE}; }}"
+            f"QTabBar::tab {{ background: transparent; color: {TEXT_SECONDARY}; "
+            f"  font-family: {FONT_UI}; font-size: 12px; "
+            f"  padding: 8px 20px; min-width: 160px; border: none; "
+            f"  border-bottom: 3px solid transparent; margin-bottom: -2px; }}"
+            f"QTabBar::tab:selected {{ color: #2E86C1; font-weight: 700; "
+            f"  border-bottom: 3px solid #2E86C1; background: {PANEL_BG}; }}"
+            f"QTabBar::tab:hover:!selected {{ background: #EEF0F4; color: {TEXT_PRIMARY}; }}"
         )
         self.setCentralWidget(self._tab_widget)
 
@@ -977,17 +1056,24 @@ class ResultsDashboard(QMainWindow):
         eid = result_element.id
 
         if eid in self._tabs:
-            # Refresh existing tab
             self._tabs[eid].refresh(results_store)
             self._select_tab(eid)
         else:
-            # Create new tab
             tab = ResultTab(result_element, results_store, graph)
             self._tabs[eid] = tab
             title = result_element.title or result_element.name
             self._tab_widget.addTab(tab, title)
             self._select_tab(eid)
 
+        # Update window title with model name
+        n_tabs = len(self._tabs)
+        graph_name = getattr(graph, '_model_name', None)
+        if graph_name is None:
+            # Extract from first element name as a proxy
+            names = [el.name for el in graph.elements.values()]
+            graph_name = None
+        suffix = f"  ({n_tabs} result{'s' if n_tabs != 1 else ''})"
+        self.setWindowTitle(f"Results{suffix}")
         self._update_status(results_store)
 
     def refresh_all(self, results_store: "ResultsStore") -> None:
@@ -1010,12 +1096,16 @@ class ResultsDashboard(QMainWindow):
 
     def _update_status(self, results_store: "ResultsStore") -> None:
         if results_store:
-            n  = results_store.completed_steps
-            dt = float(results_store.timesteps[1] - results_store.timesteps[0]) \
-                 if len(results_store.timesteps) > 1 else 1.0
+            n   = results_store.completed_steps
+            dt  = float(results_store.timesteps[1] - results_store.timesteps[0]) \
+                  if len(results_store.timesteps) > 1 else 1.0
+            ms  = results_store.run_duration_s * 1000
+            tab_n = self._tab_widget.count()
             self._status.showMessage(
-                f"  {n} steps  ·  dt = {dt} day  ·  "
-                f"{results_store.run_duration_s*1000:.0f} ms"
+                f"  Tab {self._tab_widget.currentIndex()+1} of {tab_n}  "
+                f"•  {n:,} steps  "
+                f"•  Δt = {dt} day  "
+                f"•  {ms:.0f} ms"
             )
 
     def _current_tab(self) -> ResultTab | None:
