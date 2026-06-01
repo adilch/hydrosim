@@ -848,9 +848,6 @@ class ResultTab(QWidget):
 
         right_col.addWidget(self._stack, stretch=1)
 
-        self._btn_style_active   = btn_style_active
-        self._btn_style_inactive = btn_style_inactive
-
         # Initial draw
         self._draw()
 
