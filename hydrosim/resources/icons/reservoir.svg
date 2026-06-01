@@ -1,0 +1,19 @@
+<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Dam embankment walls (trapezoidal cross-section) -->
+  <path d="M1.5 18 L6 4 L14 4 L18.5 18" stroke="currentColor" stroke-width="1.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Bottom floor -->
+  <line x1="3.5" y1="18" x2="16.5" y2="18" stroke="currentColor" stroke-width="1.2"
+        stroke-linecap="round"/>
+  <!-- Water surface (wavy) at ~60% full -->
+  <path d="M5 12.5 Q7.5 11 10 12.5 Q12.5 14 15 12.5"
+        stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+  <!-- Water body fill -->
+  <path d="M5 12.5 Q7.5 11 10 12.5 Q12.5 14 15 12.5 L15.8 18 L4.2 18 Z"
+        fill="currentColor" fill-opacity="0.28"/>
+  <!-- Elevation tick mark (E-V curve indicator) -->
+  <line x1="14.5" y1="10" x2="16.5" y2="10" stroke="currentColor" stroke-width="1.2"
+        stroke-linecap="round"/>
+  <line x1="15" y1="12.5" x2="16.5" y2="12.5" stroke="currentColor" stroke-width="1.2"
+        stroke-linecap="round"/>
+</svg>

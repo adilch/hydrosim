@@ -81,6 +81,7 @@ _ICON_MAP = {
     "Constant":          "constant",
     "TimeSeries":        "timeseries",
     "WaterStore":        "waterstore",
+    "Reservoir":         "reservoir",
     "Expression":        "expression",
     "TimeHistoryResult": "timehistory",
 }
@@ -291,7 +292,7 @@ class ElementItem(QGraphicsItem):
         class_name = self.element.__class__.__name__
         if class_name == "Constant":
             self._paint_constant_body(painter, body_top)
-        elif class_name == "WaterStore":
+        elif class_name in ("WaterStore", "Reservoir"):
             self._paint_waterstore_body(painter, body_top, card_rect)
         elif class_name == "Expression":
             self._paint_expression_body(painter, body_top)

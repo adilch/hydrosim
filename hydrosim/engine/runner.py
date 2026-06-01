@@ -144,6 +144,8 @@ class SimulationRunner:
         isolated   = ModelValidator(self.graph).get_isolated_element_ids()
         name_to_id = self.graph.build_name_to_id_map()
 
+        from hydrosim.model.elements.reservoir import Reservoir
+
         for el in self.graph.elements.values():
             if el.id in isolated:
                 continue
@@ -151,6 +153,8 @@ class SimulationRunner:
                 el.prepare()
             elif isinstance(el, Expression):
                 el.prepare(name_to_id)
+            elif isinstance(el, Reservoir):
+                el.prepare()
 
     # ── Step 5: Stock initialisation ─────────────────────────────────────────
 

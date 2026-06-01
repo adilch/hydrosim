@@ -1084,11 +1084,13 @@ class MainWindow(QMainWindow):
             if el.__class__.__name__ == type_name
         )
         n = existing + 1
+        from hydrosim.model.elements.reservoir import Reservoir
         defaults = {
-            "Constant":          lambda: Constant(name=f"Constant_{n}",    position=position),
-            "TimeSeries":        lambda: TimeSeries(name=f"TimeSeries_{n}", position=position),
-            "WaterStore":        lambda: WaterStore(name=f"WaterStore_{n}", position=position),
-            "Expression":        lambda: Expression(name=f"Expression_{n}", position=position),
+            "Constant":          lambda: Constant(name=f"Constant_{n}",      position=position),
+            "TimeSeries":        lambda: TimeSeries(name=f"TimeSeries_{n}",   position=position),
+            "WaterStore":        lambda: WaterStore(name=f"WaterStore_{n}",   position=position),
+            "Reservoir":         lambda: Reservoir(name=f"Reservoir_{n}",     position=position),
+            "Expression":        lambda: Expression(name=f"Expression_{n}",   position=position),
             "TimeHistoryResult": lambda: TimeHistoryResult(name=f"Result_{n}", position=position),
         }
         factory = defaults.get(type_name)
@@ -1099,6 +1101,7 @@ class MainWindow(QMainWindow):
         from hydrosim.gui.dialogs.constant_dialog    import ConstantDialog
         from hydrosim.gui.dialogs.timeseries_dialog  import TimeSeriesDialog
         from hydrosim.gui.dialogs.waterstore_dialog  import WaterStoreDialog
+        from hydrosim.gui.dialogs.reservoir_dialog   import ReservoirDialog
         from hydrosim.gui.dialogs.expression_dialog  import ExpressionDialog
         from hydrosim.gui.dialogs.timehistory_dialog import TimeHistoryDialog
 
@@ -1106,6 +1109,7 @@ class MainWindow(QMainWindow):
             "Constant":          ConstantDialog,
             "TimeSeries":        TimeSeriesDialog,
             "WaterStore":        WaterStoreDialog,
+            "Reservoir":         ReservoirDialog,
             "Expression":        ExpressionDialog,
             "TimeHistoryResult": TimeHistoryDialog,
         }

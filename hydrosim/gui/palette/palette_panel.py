@@ -31,6 +31,7 @@ _ELEMENTS = [
     ("Constant",          "Constant",        "Fixed scalar value",            "input"),
     ("TimeSeries",        "Time Series",     "Time-varying input from table", "input"),
     ("WaterStore",        "Water Store",     "Bounded storage with routing",  "stock"),
+    ("Reservoir",         "Reservoir",       "Storage with E-V bathymetry",   "stock"),
     ("Expression",        "Expression",      "Formula using other elements",  "expression"),
     ("TimeHistoryResult", "Time History",    "Hydrograph result viewer",      "result"),
 ]
@@ -49,6 +50,7 @@ _ICON_MAP = {
     "Constant":          "constant",
     "TimeSeries":        "timeseries",
     "WaterStore":        "waterstore",
+    "Reservoir":         "reservoir",
     "Expression":        "expression",
     "TimeHistoryResult": "timehistory",
 }
