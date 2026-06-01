@@ -150,9 +150,283 @@ QComboBox QAbstractItemView {
     border: 1px solid #E7E9EE;
     border-radius: 6px;
     background: #FFFFFF;
+    color: #1A1A2E;
     selection-background-color: #EEF0F4;
     selection-color: #1A1A2E;
+    outline: none;
     padding: 4px;
+}
+QComboBox QAbstractItemView::item {
+    color: #1A1A2E;
+    background: #FFFFFF;
+    padding: 5px 10px;
+    min-height: 24px;
+}
+QComboBox QAbstractItemView::item:selected,
+QComboBox QAbstractItemView::item:hover {
+    background: #EEF0F4;
+    color: #1A1A2E;
+}
+
+/* ── Dark-mode shield — all list / tree / table views ────────────────────────
+   Qt6 on Windows inherits the system palette for QAbstractItemView descendants.
+   Setting every colour role explicitly here prevents dark mode from injecting
+   black backgrounds or white-on-white text into any popup or list widget.    */
+QAbstractItemView {
+    background: #FFFFFF;
+    color: #1A1A2E;
+    alternate-background-color: #F9FAFB;
+    selection-background-color: #EEF0F4;
+    selection-color: #1A1A2E;
+    gridline-color: #F0F1F5;
+    border: 1px solid #E5E7EB;
+    outline: none;
+}
+QAbstractItemView::item {
+    color: #1A1A2E;
+    background: transparent;
+    padding: 3px 6px;
+}
+QAbstractItemView::item:selected {
+    background: #EEF0F4;
+    color: #1A1A2E;
+}
+QAbstractItemView::item:hover {
+    background: #F6F8FB;
+    color: #1A1A2E;
+}
+QAbstractItemView::item:selected:hover {
+    background: #E4EDF5;
+    color: #1A1A2E;
+}
+
+/* ── List / tree specific ────────────────────────────────────────────────── */
+QListView, QListWidget {
+    background: #FFFFFF;
+    color: #1A1A2E;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    outline: none;
+}
+QListView::item, QListWidget::item {
+    color: #1A1A2E;
+    padding: 4px 8px;
+}
+QListView::item:selected, QListWidget::item:selected {
+    background: #EEF0F4;
+    color: #1A1A2E;
+}
+
+QTreeView, QTreeWidget {
+    background: #FFFFFF;
+    color: #1A1A2E;
+    border: 1px solid #E5E7EB;
+    outline: none;
+}
+QTreeView::item, QTreeWidget::item {
+    color: #1A1A2E;
+    padding: 3px 4px;
+}
+QTreeView::item:selected, QTreeWidget::item:selected {
+    background: #EEF0F4;
+    color: #1A1A2E;
+}
+
+/* ── Table specific ──────────────────────────────────────────────────────── */
+QTableView, QTableWidget {
+    background: #FFFFFF;
+    color: #1A1A2E;
+    gridline-color: #F0F1F5;
+    alternate-background-color: #F9FAFB;
+    selection-background-color: #EEF0F4;
+    selection-color: #1A1A2E;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    outline: none;
+}
+QTableView::item, QTableWidget::item {
+    color: #1A1A2E;
+    padding: 2px 6px;
+    border: none;
+}
+QTableView::item:selected, QTableWidget::item:selected {
+    background: #EEF0F4;
+    color: #1A1A2E;
+}
+QHeaderView {
+    background: #F5F6FA;
+    color: #1A1A2E;
+}
+QHeaderView::section {
+    background: #F5F6FA;
+    color: #1A1A2E;
+    font-weight: 600;
+    border: none;
+    border-bottom: 1px solid #E5E7EB;
+    padding: 4px 8px;
+}
+QHeaderView::section:hover {
+    background: #EEF0F4;
+}
+
+/* ── Spinbox buttons ─────────────────────────────────────────────────────── */
+QDoubleSpinBox::up-button, QSpinBox::up-button,
+QDoubleSpinBox::down-button, QSpinBox::down-button {
+    background: #F9FAFB;
+    border: none;
+    width: 18px;
+}
+QDoubleSpinBox::up-button:hover, QSpinBox::up-button:hover,
+QDoubleSpinBox::down-button:hover, QSpinBox::down-button:hover {
+    background: #EEF0F4;
+}
+
+/* ── Dialog button box ───────────────────────────────────────────────────── */
+QDialogButtonBox QPushButton {
+    min-width: 72px;
+}
+
+/* ── Date edit ───────────────────────────────────────────────────────────── */
+QDateEdit {
+    background: #FFFFFF;
+    color: #1A1A2E;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+QDateEdit:focus { border-color: #2E86C1; }
+QDateEdit::drop-down { border: none; width: 20px; }
+QDateEdit QAbstractItemView {
+    background: #FFFFFF;
+    color: #1A1A2E;
+    selection-background-color: #EEF0F4;
+    selection-color: #1A1A2E;
+}
+
+/* ── Calendar widget (date picker popup) ─────────────────────────────────── */
+QCalendarWidget {
+    background: #FFFFFF;
+    color: #1A1A2E;
+}
+QCalendarWidget QAbstractItemView {
+    background: #FFFFFF;
+    color: #1A1A2E;
+    selection-background-color: #2E86C1;
+    selection-color: #FFFFFF;
+}
+QCalendarWidget QWidget {
+    background: #FFFFFF;
+    color: #1A1A2E;
+}
+QCalendarWidget QToolButton {
+    background: transparent;
+    color: #1A1A2E;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+QCalendarWidget QToolButton:hover { background: #EEF0F4; }
+QCalendarWidget QMenu {
+    background: #FFFFFF;
+    color: #1A1A2E;
+}
+
+/* ── Popup menus (already defined above — reinforce with full colour set) ── */
+QMenu {
+    background: #FFFFFF;
+    color: #1A1A2E;
+    border: 1px solid #E7E9EE;
+    border-radius: 8px;
+    padding: 5px;
+}
+QMenu::item { color: #1A1A2E; background: transparent; }
+QMenu::item:selected { background: #EEF0F4; color: #1A1A2E; }
+QMenu::item:disabled { color: #9CA3AF; }
+
+/* ── Radio buttons ───────────────────────────────────────────────────────── */
+QRadioButton {
+    color: #1A1A2E;
+    spacing: 8px;
+    font-size: 12px;
+}
+QRadioButton::indicator {
+    width: 16px; height: 16px;
+    border: 2px solid #E5E7EB;
+    border-radius: 8px;
+    background: #FFFFFF;
+}
+QRadioButton::indicator:checked {
+    background: #2E86C1;
+    border-color: #2E86C1;
+}
+QRadioButton::indicator:hover { border-color: #2E86C1; }
+
+/* ── Group box ───────────────────────────────────────────────────────────── */
+QGroupBox {
+    color: #1A1A2E;
+    background: transparent;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding-top: 8px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    color: #1A1A2E;
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 6px;
+    left: 12px;
+}
+
+/* ── Progress bar ────────────────────────────────────────────────────────── */
+QProgressBar {
+    background: #EEF0F4;
+    color: #1A1A2E;
+    border: none;
+    border-radius: 4px;
+    text-align: center;
+}
+QProgressBar::chunk {
+    background: #2E86C1;
+    border-radius: 4px;
+}
+
+/* ── Tab widget ──────────────────────────────────────────────────────────── */
+QTabWidget::pane {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 0 0 8px 8px;
+}
+QTabBar::tab {
+    background: #F5F6FA;
+    color: #6B7280;
+    border: 1px solid #E5E7EB;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    padding: 6px 16px;
+    margin-right: 2px;
+}
+QTabBar::tab:selected {
+    background: #FFFFFF;
+    color: #1A1A2E;
+    font-weight: 600;
+    border-color: #E5E7EB;
+}
+QTabBar::tab:hover:!selected {
+    background: #EEF0F4;
+    color: #1A1A2E;
+}
+
+/* ── Message boxes and input dialogs ─────────────────────────────────────── */
+QMessageBox {
+    background: #FFFFFF;
+    color: #1A1A2E;
+}
+QMessageBox QLabel { color: #1A1A2E; background: transparent; }
+QInputDialog {
+    background: #FFFFFF;
+    color: #1A1A2E;
 }
 
 /* ── Check boxes ─────────────────────────────────────────────────────────── */
