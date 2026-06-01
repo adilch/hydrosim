@@ -53,6 +53,56 @@ _RESTRICTED_GLOBALS: dict[str, object] = {"__builtins__": {}, **SAFE_FUNCTIONS}
 _RESERVED = frozenset(SAFE_FUNCTIONS.keys()) | {"t", "dt", "True", "False", "None"}
 
 
+# ── Dot-notation proxy ────────────────────────────────────────────────────────
+
+class _ElementProxy:
+    """
+    Lightweight proxy so that dot-notation references like 'BlueReservoir.area'
+    work inside eval().  Python sees `BlueReservoir` as this object and resolves
+    `.area` via __getattr__, which looks up 'BlueReservoir.area' in the values dict.
+    """
+    __slots__ = ("_values", "_prefix")
+
+    def __init__(self, values: dict[str, float], prefix: str):
+        object.__setattr__(self, "_values", values)
+        object.__setattr__(self, "_prefix", prefix)
+
+    def __getattr__(self, name: str) -> float:
+        key = f"{object.__getattribute__(self, '_prefix')}.{name}"
+        values = object.__getattribute__(self, "_values")
+        if key in values:
+            return values[key]
+        raise AttributeError(f"No port '{name}' on element '{object.__getattribute__(self, '_prefix')}'")
+
+
+def _build_local_ns(
+    input_values: dict[str, float],
+    t: float,
+    dt: float,
+) -> dict[str, object]:
+    """
+    Build the eval() local namespace from input_values.
+
+    Simple names  ("Daily_Rainfall") → added directly.
+    Dot-notation  ("BlueReservoir.area") → an _ElementProxy for "BlueReservoir"
+    is added so that eval resolves BlueReservoir.area via attribute access.
+    """
+    local_ns: dict[str, object] = {"t": t, "dt": dt}
+    proxy_prefixes: set[str] = set()
+
+    for key, val in input_values.items():
+        if "." in key:
+            prefix = key.split(".")[0]
+            proxy_prefixes.add(prefix)
+        else:
+            local_ns[key] = val
+
+    for prefix in proxy_prefixes:
+        local_ns[prefix] = _ElementProxy(input_values, prefix)
+
+    return local_ns
+
+
 # ── ExpressionParser ──────────────────────────────────────────────────────────
 
 class ExpressionParser:
@@ -90,9 +140,7 @@ class ExpressionParser:
         Returns float result.
         Raises ExpressionEvaluationError on failure (except ZeroDivisionError → 0.0).
         """
-        local_ns: dict[str, object] = dict(input_values)
-        local_ns["t"]  = t
-        local_ns["dt"] = dt
+        local_ns = _build_local_ns(input_values, t, dt)
 
         try:
             # Safety: eval() is safe here because:
